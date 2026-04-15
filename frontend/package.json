@@ -16,7 +16,6 @@
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
-    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "@vitejs/plugin-react": "^4.2.0",
     "autoprefixer": "^10.4.16",
     "postcss": "^8.4.32",
