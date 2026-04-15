@@ -90,6 +90,14 @@ router.get('/facebook/callback', async (req, res) => {
 });
 
 // =============================================
+// GET /auth/config
+// Trả về config public cho frontend (App ID)
+// =============================================
+router.get('/config', (_req, res) => {
+  res.json({ appId: FACEBOOK_APP_ID });
+});
+
+// =============================================
 // POST /auth/facebook/token
 // Nhận accessToken từ Facebook JS SDK (frontend)
 // Verify với Facebook rồi tạo session

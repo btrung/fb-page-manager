@@ -3,8 +3,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../utils/api';
 
-const FACEBOOK_APP_ID = import.meta.env.VITE_FACEBOOK_APP_ID;
-
 const ERROR_MESSAGES = {
   permission_denied: 'Bạn đã từ chối cấp quyền. Vui lòng thử lại.',
   auth_failed: 'Đăng nhập thất bại. Vui lòng thử lại.',
@@ -17,24 +15,26 @@ const LoginPage = () => {
   const { setUser } = useAuth();
   const navigate = useNavigate();
 
-  // Load Facebook JS SDK
+  // Load Facebook JS SDK — lấy App ID từ backend
   useEffect(() => {
     if (window.FB) return;
 
-    window.fbAsyncInit = function () {
-      window.FB.init({
-        appId: FACEBOOK_APP_ID,
-        cookie: true,
-        xfbml: false,
-        version: 'v21.0',
-      });
-    };
+    api.get('/auth/config').then(({ data }) => {
+      window.fbAsyncInit = function () {
+        window.FB.init({
+          appId: data.appId,
+          cookie: true,
+          xfbml: false,
+          version: 'v21.0',
+        });
+      };
 
-    const script = document.createElement('script');
-    script.src = 'https://connect.facebook.net/vi_VN/sdk.js';
-    script.async = true;
-    script.defer = true;
-    document.body.appendChild(script);
+      const script = document.createElement('script');
+      script.src = 'https://connect.facebook.net/vi_VN/sdk.js';
+      script.async = true;
+      script.defer = true;
+      document.body.appendChild(script);
+    });
   }, []);
 
   const handleLogin = () => {
