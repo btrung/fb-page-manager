@@ -1,0 +1,9 @@
+node_modules/
+.env
+frontend/dist/
+backend/db/posts.db
+ai-service/__pycache__/
+ai-service/chroma_data/
+ai-service/.env
+*.log
+.DS_Store
