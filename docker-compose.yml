@@ -7,6 +7,33 @@ name: fb-page-manager
 
 services:
 
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: fbpagemanager
+      POSTGRES_USER: fbadmin
+      POSTGRES_PASSWORD: fbpassword
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fbadmin -d fbpagemanager"]
+      interval: 10s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     volumes:
@@ -28,10 +55,13 @@ services:
     environment:
       - NODE_ENV=development
       - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://fbadmin:fbpassword@postgres:5432/fbpagemanager
     env_file:
       - ./backend/.env
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
@@ -64,3 +94,4 @@ services:
 volumes:
   redis_data:
   ai_chroma_data:
+  postgres_data:

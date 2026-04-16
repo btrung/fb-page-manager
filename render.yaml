@@ -49,6 +49,12 @@ services:
       - key: AI_SERVICE_URL
         sync: false
 
+      # PostgreSQL — tự động lấy từ database bên dưới
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fb-page-manager-db
+          property: connectionString
+
   # =========================================
   # 2. AI SERVICE (Python FastAPI)
   # =========================================
@@ -75,3 +81,13 @@ services:
     name: fb-page-manager-redis
     plan: free
     maxmemoryPolicy: allkeys-lru
+
+databases:
+
+  # =========================================
+  # 4. POSTGRESQL
+  # =========================================
+  - name: fb-page-manager-db
+    plan: free
+    databaseName: fbpagemanager
+    user: fbadmin

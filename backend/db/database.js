@@ -1,109 +1,119 @@
 /**
- * NeDB — embedded database, pure JavaScript, không cần compile
- * Dữ liệu lưu tại: backend/db/posts.db (file text)
+ * PostgreSQL — dùng node-postgres (pg)
+ * Bảng posts tự động tạo khi khởi động nếu chưa có
  */
-const Datastore = require('@seald-io/nedb');
-const path = require('path');
+const { Pool } = require('pg');
 
-const db = new Datastore({
-  filename: path.join(__dirname, 'posts.db'),
-  autoload: true, // Tự tải file khi khởi động
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
 });
 
-// Index để query nhanh hơn
-db.ensureIndex({ fieldName: 'id', unique: true });
-db.ensureIndex({ fieldName: 'pageId' });
-db.ensureIndex({ fieldName: 'userId' });
+// =============================================
+// Tạo bảng nếu chưa tồn tại
+// =============================================
+const initDb = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS posts (
+      id           VARCHAR(255) PRIMARY KEY,
+      page_id      VARCHAR(255) NOT NULL,
+      user_id      VARCHAR(255) NOT NULL,
+      message      TEXT         DEFAULT '',
+      created_time TIMESTAMPTZ,
+      picture_url  TEXT,
+      permalink    TEXT,
+      likes        INTEGER      DEFAULT 0,
+      comments     INTEGER      DEFAULT 0,
+      shares       INTEGER      DEFAULT 0,
+      saved_at     TIMESTAMPTZ  DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_posts_user_page ON posts (user_id, page_id);
+  `);
+  console.log('[DB] PostgreSQL ready');
+};
+
+initDb().catch((err) => console.error('[DB] Init failed:', err.message));
 
 // =============================================
 // Lưu nhiều posts (upsert — nếu đã có thì update)
 // =============================================
-const savePosts = (userId, pageId, posts) => {
-  return new Promise((resolve, reject) => {
-    let saved = 0;
-    if (posts.length === 0) return resolve(0);
+const savePosts = async (userId, pageId, posts) => {
+  if (posts.length === 0) return 0;
 
-    posts.forEach((post, idx) => {
-      const doc = {
-        id: post.id,
+  let saved = 0;
+  for (const post of posts) {
+    await pool.query(
+      `INSERT INTO posts
+         (id, page_id, user_id, message, created_time, picture_url, permalink, likes, comments, shares, saved_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, NOW())
+       ON CONFLICT (id) DO UPDATE SET
+         message      = EXCLUDED.message,
+         picture_url  = EXCLUDED.picture_url,
+         permalink    = EXCLUDED.permalink,
+         likes        = EXCLUDED.likes,
+         comments     = EXCLUDED.comments,
+         shares       = EXCLUDED.shares,
+         saved_at     = NOW()`,
+      [
+        post.id,
         pageId,
         userId,
-        message: post.message || '',
-        createdTime: post.createdTime || null,
-        pictureUrl: post.picture || null,
-        permalink: post.permalink || null,
-        likes: post.likes || 0,
-        comments: post.comments || 0,
-        shares: post.shares || 0,
-        savedAt: new Date().toISOString(),
-      };
-
-      db.update(
-        { id: post.id },
-        { $set: doc },
-        { upsert: true },
-        (err) => {
-          if (!err) saved++;
-          if (idx === posts.length - 1) {
-            // Tất cả đã xử lý xong
-            setTimeout(() => resolve(saved), 50);
-          }
-        }
-      );
-    });
-  });
+        post.message || '',
+        post.createdTime || null,
+        post.picture || null,
+        post.permalink || null,
+        post.likes || 0,
+        post.comments || 0,
+        post.shares || 0,
+      ]
+    );
+    saved++;
+  }
+  return saved;
 };
 
 // =============================================
 // Lấy posts của 1 page từ DB
 // =============================================
-const getPostsByPage = (userId, pageId, limit = 50) => {
-  return new Promise((resolve, reject) => {
-    db.find({ userId, pageId })
-      .sort({ createdTime: -1 })
-      .limit(limit)
-      .exec((err, docs) => {
-        if (err) return reject(err);
-        resolve(docs);
-      });
-  });
+const getPostsByPage = async (userId, pageId, limit = 50) => {
+  const { rows } = await pool.query(
+    `SELECT id, page_id AS "pageId", user_id AS "userId", message,
+            created_time AS "createdTime", picture_url AS "pictureUrl",
+            permalink, likes, comments, shares, saved_at AS "savedAt"
+     FROM posts
+     WHERE user_id = $1 AND page_id = $2
+     ORDER BY created_time DESC
+     LIMIT $3`,
+    [userId, pageId, limit]
+  );
+  return rows;
 };
 
 // =============================================
 // Đếm số posts trong DB
 // =============================================
-const countPosts = (userId, pageId) => {
-  return new Promise((resolve, reject) => {
-    db.count({ userId, pageId }, (err, count) => {
-      if (err) return reject(err);
-      resolve(count);
-    });
-  });
+const countPosts = async (userId, pageId) => {
+  const { rows } = await pool.query(
+    'SELECT COUNT(*)::int AS count FROM posts WHERE user_id = $1 AND page_id = $2',
+    [userId, pageId]
+  );
+  return rows[0].count;
 };
 
 // =============================================
 // Tổng quan pages đã lưu của 1 user
 // =============================================
-const getSavedPages = (userId) => {
-  return new Promise((resolve, reject) => {
-    db.find({ userId }, (err, docs) => {
-      if (err) return reject(err);
-
-      // Group by pageId
-      const map = {};
-      docs.forEach((doc) => {
-        if (!map[doc.pageId]) {
-          map[doc.pageId] = { pageId: doc.pageId, postCount: 0, lastSaved: null };
-        }
-        map[doc.pageId].postCount++;
-        if (!map[doc.pageId].lastSaved || doc.savedAt > map[doc.pageId].lastSaved) {
-          map[doc.pageId].lastSaved = doc.savedAt;
-        }
-      });
-
-      resolve(Object.values(map));
-    });
-  });
+const getSavedPages = async (userId) => {
+  const { rows } = await pool.query(
+    `SELECT page_id AS "pageId",
+            COUNT(*)::int AS "postCount",
+            MAX(saved_at) AS "lastSaved"
+     FROM posts
+     WHERE user_id = $1
+     GROUP BY page_id`,
+    [userId]
+  );
+  return rows;
 };
 
 module.exports = { savePosts, getPostsByPage, countPosts, getSavedPages };

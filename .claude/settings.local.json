@@ -8,7 +8,9 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5173)",
       "Bash(pkill -f \"node server.js\")",
       "Bash(pkill -f \"vite\")",
-      "Bash(docker compose *)"
+      "Bash(docker compose *)",
+      "Bash(cat backend/routes/*.js)",
+      "Bash(cat backend/middleware/*.js)"
     ]
   }
 }
