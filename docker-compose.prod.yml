@@ -1,0 +1,51 @@
+# =============================================
+# PRODUCTION — nginx reverse proxy, no exposed ports except 80
+# Dùng: docker compose -f docker-compose.prod.yml up -d
+# =============================================
+
+services:
+
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: always
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 3
+    restart: always
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - AI_SERVICE_URL=http://ai-service:8000
+    env_file:
+      - ./backend/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: always
+
+  ai-service:
+    build: ./ai-service
+    volumes:
+      - ai_chroma_data:/app/chroma_data
+    env_file:
+      - ./ai-service/.env
+    restart: always
+
+volumes:
+  redis_data:
+  ai_chroma_data:

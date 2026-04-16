@@ -7,6 +7,7 @@ pydantic-settings==2.1.0
 
 # Vector DB
 chromadb==0.4.22
+numpy<2.0          # chromadb 0.4.x không tương thích numpy 2.x
 
 # AI / Embeddings
 openai==1.10.0          # Cho text embeddings

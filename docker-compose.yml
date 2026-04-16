@@ -1,0 +1,64 @@
+# =============================================
+# DEVELOPMENT — hot reload, ports expose ra ngoài
+# Dùng: docker compose up
+# =============================================
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 3
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./backend:/app
+      - /app/node_modules   # giữ node_modules trong container
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=development
+      - REDIS_URL=redis://redis:6379
+    env_file:
+      - ./backend/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      - BACKEND_URL=http://backend:5000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  ai-service:
+    build: ./ai-service
+    volumes:
+      - ./ai-service:/app
+      - ai_chroma_data:/app/chroma_data
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./ai-service/.env
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  ai_chroma_data:

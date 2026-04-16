@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
+const { createClient } = require('redis');
+const RedisStore = require('connect-redis').default;
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -13,6 +15,17 @@ const { requireAuth } = require('./middleware/authMiddleware');
 const app = express();
 const PORT = process.env.PORT || 5000;
 const isProd = process.env.NODE_ENV === 'production';
+
+// =============================================
+// Redis — dùng làm session store khi có REDIS_URL
+// Fallback về in-memory nếu chạy local không có Redis
+// =============================================
+let sessionStore;
+if (process.env.REDIS_URL) {
+  const redisClient = createClient({ url: process.env.REDIS_URL });
+  redisClient.connect().catch((err) => console.error('[REDIS]', err.message));
+  sessionStore = new RedisStore({ client: redisClient });
+}
 
 // =============================================
 // Trust proxy (bắt buộc trên Render/Railway)
@@ -38,6 +51,7 @@ if (!isProd) {
 // Session
 // =============================================
 app.use(session({
+  store: sessionStore,  // Redis nếu có, in-memory nếu không
   secret: process.env.SESSION_SECRET || 'change_this_in_production',
   resave: false,
   saveUninitialized: false,
