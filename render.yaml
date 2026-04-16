@@ -10,7 +10,7 @@ services:
   #    Build React → copy vào backend → serve
   # =========================================
   - type: web
-    name: ai-chat-backend
+    name: fb-page-manager
     runtime: node
     buildCommand: |
       cd frontend && npm install --include=dev && npm run build
@@ -27,7 +27,7 @@ services:
         sync: false
 
       # Sau khi deploy xong, copy URL của service này vào đây
-      # VD: https://ai-chat-backend.onrender.com
+      # VD: https://fb-page-manager.onrender.com
       - key: FACEBOOK_CALLBACK_URL
         sync: false   # https://<tên-service>.onrender.com/auth/facebook/callback
       - key: FRONTEND_URL
@@ -41,7 +41,7 @@ services:
       - key: REDIS_URL
         fromService:
           type: redis
-          name: ai-chat-redis
+          name: fb-page-manager-redis
           property: connectionString
 
       # AI Service URL — điền sau khi ai-service deploy xong
@@ -53,7 +53,7 @@ services:
   # 2. AI SERVICE (Python FastAPI)
   # =========================================
   - type: web
-    name: ai-chat-ai-service
+    name: fb-page-manager-ai
     runtime: python
     rootDir: ai-service
     buildCommand: pip install -r requirements.txt
@@ -72,6 +72,6 @@ services:
   # 3. REDIS (session store)
   # =========================================
   - type: redis
-    name: ai-chat-redis
+    name: fb-page-manager-redis
     plan: free
     maxmemoryPolicy: allkeys-lru
