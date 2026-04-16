@@ -3,6 +3,8 @@
 # Dùng: docker compose -f docker-compose.prod.yml up -d
 # =============================================
 
+name: fb-page-manager
+
 services:
 
   nginx:

@@ -45,7 +45,7 @@ services:
           property: connectionString
 
       # AI Service URL — điền sau khi ai-service deploy xong
-      # VD: https://ai-chat-ai.onrender.com
+      # VD: https://fb-page-manager-ai.onrender.com
       - key: AI_SERVICE_URL
         sync: false
 

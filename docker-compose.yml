@@ -3,6 +3,8 @@
 # Dùng: docker compose up
 # =============================================
 
+name: fb-page-manager
+
 services:
 
   redis:
