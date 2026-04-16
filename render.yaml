@@ -1,0 +1,77 @@
+# =============================================
+# Render.com — Infrastructure as Code
+# Deploy: https://dashboard.render.com/select-repo
+# =============================================
+
+services:
+
+  # =========================================
+  # 1. BACKEND + FRONTEND STATIC
+  #    Build React → copy vào backend → serve
+  # =========================================
+  - type: web
+    name: ai-chat-backend
+    runtime: node
+    buildCommand: |
+      cd frontend && npm install --include=dev && npm run build
+      cd ../backend && npm install --only=production
+    startCommand: cd backend && node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Facebook — điền trong Render Dashboard
+      - key: FACEBOOK_APP_ID
+        sync: false
+      - key: FACEBOOK_APP_SECRET
+        sync: false
+
+      # Sau khi deploy xong, copy URL của service này vào đây
+      # VD: https://ai-chat-backend.onrender.com
+      - key: FACEBOOK_CALLBACK_URL
+        sync: false   # https://<tên-service>.onrender.com/auth/facebook/callback
+      - key: FRONTEND_URL
+        sync: false   # https://<tên-service>.onrender.com
+
+      # Session secret — Render tự sinh ngẫu nhiên
+      - key: SESSION_SECRET
+        generateValue: true
+
+      # Redis — tự động lấy từ service bên dưới
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: ai-chat-redis
+          property: connectionString
+
+      # AI Service URL — điền sau khi ai-service deploy xong
+      # VD: https://ai-chat-ai.onrender.com
+      - key: AI_SERVICE_URL
+        sync: false
+
+  # =========================================
+  # 2. AI SERVICE (Python FastAPI)
+  # =========================================
+  - type: web
+    name: ai-chat-ai-service
+    runtime: python
+    rootDir: ai-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: OPENAI_API_KEY
+        sync: false   # Điền trong Render Dashboard
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: CHROMA_PERSIST_DIR
+        value: /tmp/chroma_data  # Free tier: ephemeral, mất khi restart
+
+  # =========================================
+  # 3. REDIS (session store)
+  # =========================================
+  - type: redis
+    name: ai-chat-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
