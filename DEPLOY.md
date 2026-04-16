@@ -18,7 +18,7 @@ git push
 
 Sau khi services tạo xong, vào từng service điền:
 
-### ai-chat-backend
+### fb-page-manager (backend)
 | Key | Value |
 |---|---|
 | `FACEBOOK_APP_ID` | App ID từ Facebook Developers |
@@ -29,7 +29,7 @@ Sau khi services tạo xong, vào từng service điền:
 
 > `SESSION_SECRET` và `REDIS_URL` tự động — không cần điền
 
-### ai-chat-ai-service
+### fb-page-manager-ai
 | Key | Value |
 |---|---|
 | `OPENAI_API_KEY` | OpenAI API key |
