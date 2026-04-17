@@ -225,3 +225,18 @@ CREATE INDEX IF NOT EXISTS idx_crawl_logs_user_page
 
 CREATE INDEX IF NOT EXISTS idx_crawl_logs_status
   ON crawl_logs (status) WHERE status = 'running';
+
+
+-- =============================================
+-- 7. Bảng page_tokens — lưu page access token cho webhook
+--    Webhook không có session, cần token persistent
+-- =============================================
+CREATE TABLE IF NOT EXISTS page_tokens (
+  page_id           VARCHAR(255) PRIMARY KEY,
+  user_id           VARCHAR(255) NOT NULL,
+  page_access_token TEXT         NOT NULL,
+  updated_at        TIMESTAMPTZ  DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_page_tokens_user
+  ON page_tokens (user_id);

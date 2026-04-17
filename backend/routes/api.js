@@ -1,6 +1,7 @@
 const express = require('express');
 const axios = require('axios');
 const { savePosts, getPostsByPage, countPosts, getSavedPages } = require('../db/database');
+const { pool } = require('../db/migrate');
 const router = express.Router();
 
 const GRAPH_API = 'https://graph.facebook.com/v21.0';
@@ -27,6 +28,20 @@ router.get('/pages', async (req, res, next) => {
     response.data.data.forEach((page) => {
       req.session.pageTokens[page.id] = page.access_token;
     });
+
+    // Lưu page tokens vào DB để webhook auto-sync dùng
+    for (const page of response.data.data) {
+      if (page.access_token) {
+        pool.query(
+          `INSERT INTO page_tokens (page_id, user_id, page_access_token, updated_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (page_id) DO UPDATE SET
+             page_access_token = EXCLUDED.page_access_token,
+             updated_at = NOW()`,
+          [page.id, userId, page.access_token],
+        ).catch((err) => console.error('[API] Lưu page token thất bại:', err.message));
+      }
+    }
 
     // Lấy số posts đã lưu trong DB cho mỗi page
     const savedPages = await getSavedPages(userId);
