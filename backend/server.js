@@ -105,3 +105,13 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
 });
+
+// Khởi động workers trong cùng process khi START_WORKERS=true
+// Dùng cho Render free tier (không có background worker service)
+if (process.env.START_WORKERS === 'true') {
+  const { startCrawlWorker } = require('./workers/crawlWorker');
+  const { startEmbeddingWorker } = require('./workers/embeddingWorker');
+  startCrawlWorker();
+  startEmbeddingWorker();
+  console.log('[SERVER] Workers started in-process');
+}

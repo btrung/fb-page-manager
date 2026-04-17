@@ -1,23 +1,24 @@
 # =============================================
-# Render.com — Infrastructure as Code
+# Render.com — Infrastructure as Code (FREE TIER)
 # Deploy: https://dashboard.render.com/select-repo
 #
-# Services:
-#  1. backend   — Node.js API + React static
-#  2. worker    — BullMQ crawl + embedding workers
-#  3. ai-service — Python Gemini + CLIP
-#  4. redis     — BullMQ queue + session store
-#  5. postgres  — PostgreSQL 16 với pgvector
+# Services (free):
+#  1. backend   — Node.js API + React static + BullMQ workers (in-process)
+#  2. ai-service — Python Gemini + CLIP
+#  3. redis     — session store + job queue
+#  4. postgres  — PostgreSQL 16 với pgvector
 #
-# Qdrant (vector DB) dùng Qdrant Cloud free tier (external):
-#  → Tạo free cluster tại: https://cloud.qdrant.io
+# Qdrant Cloud free tier (external):
+#  → https://cloud.qdrant.io → tạo free cluster
 #  → Điền QDRANT_URL và QDRANT_API_KEY vào Render Dashboard
 # =============================================
 
 services:
 
   # =========================================
-  # 1. BACKEND (API + serve React build)
+  # 1. BACKEND (API + React + Workers)
+  #    Workers chạy in-process qua START_WORKERS=true
+  #    Không cần paid background worker service
   # =========================================
   - type: web
     name: fb-page-manager
@@ -30,13 +31,17 @@ services:
       - key: NODE_ENV
         value: production
 
+      # Workers chạy trong cùng process — không cần paid worker service
+      - key: START_WORKERS
+        value: "true"
+
       # Facebook App — điền trong Render Dashboard
       - key: FACEBOOK_APP_ID
         sync: false
       - key: FACEBOOK_APP_SECRET
         sync: false
 
-      # Sau khi deploy: https://<service-name>.onrender.com
+      # Sau khi deploy xong, copy URL của service này vào đây
       - key: FACEBOOK_CALLBACK_URL
         sync: false   # https://fb-page-manager.onrender.com/auth/facebook/callback
       - key: FRONTEND_URL
@@ -52,7 +57,7 @@ services:
           name: fb-page-manager-redis
           property: connectionString
 
-      # URL của ai-service sau khi deploy xong
+      # URL của ai-service — điền sau khi ai-service deploy xong
       - key: AI_SERVICE_URL
         sync: false   # https://fb-page-manager-ai.onrender.com
 
@@ -67,35 +72,7 @@ services:
         sync: false
 
   # =========================================
-  # 2. WORKER (BullMQ background workers)
-  #    Cùng code backend, khác start command
-  # =========================================
-  - type: worker
-    name: fb-page-manager-worker
-    runtime: node
-    buildCommand: cd backend && npm install --only=production
-    startCommand: cd backend && node workers/index.js
-    envVars:
-      - key: NODE_ENV
-        value: production
-
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: fb-page-manager-redis
-          property: connectionString
-
-      - key: DATABASE_URL
-        fromDatabase:
-          name: fb-page-manager-db
-          property: connectionString
-
-      # URL của ai-service
-      - key: AI_SERVICE_URL
-        sync: false   # https://fb-page-manager-ai.onrender.com
-
-  # =========================================
-  # 3. AI SERVICE (Python — Gemini + CLIP)
+  # 2. AI SERVICE (Python — Gemini + CLIP)
   # =========================================
   - type: web
     name: fb-page-manager-ai
@@ -116,25 +93,24 @@ services:
         value: models/text-embedding-004
 
       # Qdrant Cloud — https://cloud.qdrant.io (free 1GB)
-      # Sau khi tạo cluster: copy URL dạng https://xxx.qdrant.io:6333
       - key: QDRANT_URL
         sync: false
       - key: QDRANT_API_KEY
         sync: false
 
   # =========================================
-  # 4. REDIS
+  # 3. REDIS
   # =========================================
   - type: redis
     name: fb-page-manager-redis
     plan: free
     maxmemoryPolicy: allkeys-lru
-    ipAllowList: []   # chỉ cho phép internal Render services truy cập
+    ipAllowList: []   # chỉ cho phép internal Render services
 
 databases:
 
   # =========================================
-  # 5. POSTGRESQL 16 (có pgvector extension)
+  # 4. POSTGRESQL 16 (có pgvector extension)
   # =========================================
   - name: fb-page-manager-db
     plan: free
