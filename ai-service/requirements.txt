@@ -5,11 +5,30 @@ python-dotenv==1.0.0
 pydantic==2.5.3
 pydantic-settings==2.1.0
 
-# Vector DB
-chromadb==0.4.22
-numpy<2.0          # chromadb 0.4.x không tương thích numpy 2.x
-
+# =============================================
 # AI / Embeddings
-openai==1.10.0          # Cho text embeddings
-Pillow==10.2.0          # Xử lý ảnh
-requests==2.31.0        # Download ảnh từ URL
+# =============================================
+# OpenAI — text embeddings + vision LLM (GPT-4o)
+openai==1.10.0
+
+# sentence-transformers — CLIP image embeddings (CPU-friendly)
+# Kéo theo torch CPU tự động
+sentence-transformers==2.6.1
+
+# Xử lý ảnh trong RAM (BytesIO, resize)
+Pillow==10.2.0
+
+# HTTP client để download ảnh
+requests==2.31.0
+aiohttp==3.9.3
+
+# =============================================
+# Vector DB
+# =============================================
+# Qdrant — thay thế ChromaDB, hỗ trợ tốt hơn cho production
+qdrant-client==1.8.2
+
+# =============================================
+# Utilities
+# =============================================
+numpy>=1.24,<2.0

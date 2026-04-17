@@ -7,8 +7,9 @@ name: fb-page-manager
 
 services:
 
+  # Dùng pgvector/pgvector:pg16 để hỗ trợ vector similarity search
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: fbpagemanager
       POSTGRES_USER: fbadmin
@@ -38,10 +39,26 @@ services:
     image: redis:7-alpine
     volumes:
       - redis_data:/data
+    ports:
+      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       retries: 3
+
+  # Vector DB cho image embeddings (CLIP) và product search
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"   # HTTP REST API
+      - "6334:6334"   # gRPC
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 15s
+      retries: 5
+    restart: unless-stopped
 
   backend:
     build:
@@ -49,13 +66,14 @@ services:
       dockerfile: Dockerfile.dev
     volumes:
       - ./backend:/app
-      - /app/node_modules   # giữ node_modules trong container
+      - /app/node_modules
     ports:
       - "5000:5000"
     environment:
       - NODE_ENV=development
       - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgresql://fbadmin:fbpassword@postgres:5432/fbpagemanager
+      - AI_SERVICE_URL=http://ai-service:8000
     env_file:
       - ./backend/.env
     depends_on:
@@ -63,6 +81,31 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Worker riêng — xử lý crawl + embedding jobs từ BullMQ queue
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: ["node", "workers/index.js"]
+    environment:
+      - NODE_ENV=development
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://fbadmin:fbpassword@postgres:5432/fbpagemanager
+      - AI_SERVICE_URL=http://ai-service:8000
+    env_file:
+      - ./backend/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      ai-service:
+        condition: service_started
     restart: unless-stopped
 
   frontend:
@@ -84,14 +127,18 @@ services:
     build: ./ai-service
     volumes:
       - ./ai-service:/app
-      - ai_chroma_data:/app/chroma_data
     ports:
       - "8000:8000"
+    environment:
+      - QDRANT_URL=http://qdrant:6333
     env_file:
       - ./ai-service/.env
+    depends_on:
+      qdrant:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   redis_data:
-  ai_chroma_data:
   postgres_data:
+  qdrant_data:
