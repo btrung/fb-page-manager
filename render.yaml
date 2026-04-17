@@ -1,13 +1,23 @@
 # =============================================
 # Render.com — Infrastructure as Code
 # Deploy: https://dashboard.render.com/select-repo
+#
+# Services:
+#  1. backend   — Node.js API + React static
+#  2. worker    — BullMQ crawl + embedding workers
+#  3. ai-service — Python Gemini + CLIP
+#  4. redis     — BullMQ queue + session store
+#  5. postgres  — PostgreSQL 16 với pgvector
+#
+# Qdrant (vector DB) dùng Qdrant Cloud free tier (external):
+#  → Tạo free cluster tại: https://cloud.qdrant.io
+#  → Điền QDRANT_URL và QDRANT_API_KEY vào Render Dashboard
 # =============================================
 
 services:
 
   # =========================================
-  # 1. BACKEND + FRONTEND STATIC
-  #    Build React → copy vào backend → serve
+  # 1. BACKEND (API + serve React build)
   # =========================================
   - type: web
     name: fb-page-manager
@@ -20,43 +30,72 @@ services:
       - key: NODE_ENV
         value: production
 
-      # Facebook — điền trong Render Dashboard
+      # Facebook App — điền trong Render Dashboard
       - key: FACEBOOK_APP_ID
         sync: false
       - key: FACEBOOK_APP_SECRET
         sync: false
 
-      # Sau khi deploy xong, copy URL của service này vào đây
-      # VD: https://fb-page-manager.onrender.com
+      # Sau khi deploy: https://<service-name>.onrender.com
       - key: FACEBOOK_CALLBACK_URL
-        sync: false   # https://<tên-service>.onrender.com/auth/facebook/callback
+        sync: false   # https://fb-page-manager.onrender.com/auth/facebook/callback
       - key: FRONTEND_URL
-        sync: false   # https://<tên-service>.onrender.com
+        sync: false   # https://fb-page-manager.onrender.com
 
-      # Session secret — Render tự sinh ngẫu nhiên
       - key: SESSION_SECRET
         generateValue: true
 
-      # Redis — tự động lấy từ service bên dưới
+      # Tự lấy từ Redis service bên dưới
       - key: REDIS_URL
         fromService:
           type: redis
           name: fb-page-manager-redis
           property: connectionString
 
-      # AI Service URL — điền sau khi ai-service deploy xong
-      # VD: https://fb-page-manager-ai.onrender.com
+      # URL của ai-service sau khi deploy xong
       - key: AI_SERVICE_URL
-        sync: false
+        sync: false   # https://fb-page-manager-ai.onrender.com
 
-      # PostgreSQL — tự động lấy từ database bên dưới
+      # Tự lấy từ PostgreSQL database bên dưới
       - key: DATABASE_URL
         fromDatabase:
           name: fb-page-manager-db
           property: connectionString
 
+      # Webhook FB (optional)
+      - key: FB_WEBHOOK_VERIFY_TOKEN
+        sync: false
+
   # =========================================
-  # 2. AI SERVICE (Python FastAPI)
+  # 2. WORKER (BullMQ background workers)
+  #    Cùng code backend, khác start command
+  # =========================================
+  - type: worker
+    name: fb-page-manager-worker
+    runtime: node
+    buildCommand: cd backend && npm install --only=production
+    startCommand: cd backend && node workers/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: fb-page-manager-redis
+          property: connectionString
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: fb-page-manager-db
+          property: connectionString
+
+      # URL của ai-service
+      - key: AI_SERVICE_URL
+        sync: false   # https://fb-page-manager-ai.onrender.com
+
+  # =========================================
+  # 3. AI SERVICE (Python — Gemini + CLIP)
   # =========================================
   - type: web
     name: fb-page-manager-ai
@@ -67,15 +106,24 @@ services:
     envVars:
       - key: HOST
         value: 0.0.0.0
-      - key: OPENAI_API_KEY
-        sync: false   # Điền trong Render Dashboard
+
+      # Google Gemini — https://aistudio.google.com/app/apikey
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: VISION_MODEL
+        value: gemini-1.5-flash
       - key: EMBEDDING_MODEL
-        value: text-embedding-3-small
-      - key: CHROMA_PERSIST_DIR
-        value: /tmp/chroma_data  # Free tier: ephemeral, mất khi restart
+        value: models/text-embedding-004
+
+      # Qdrant Cloud — https://cloud.qdrant.io (free 1GB)
+      # Sau khi tạo cluster: copy URL dạng https://xxx.qdrant.io:6333
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
 
   # =========================================
-  # 3. REDIS (session store)
+  # 4. REDIS
   # =========================================
   - type: redis
     name: fb-page-manager-redis
@@ -85,7 +133,7 @@ services:
 databases:
 
   # =========================================
-  # 4. POSTGRESQL
+  # 5. POSTGRESQL 16 (có pgvector extension)
   # =========================================
   - name: fb-page-manager-db
     plan: free

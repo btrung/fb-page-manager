@@ -30,7 +30,11 @@ TEXT_DIM = 768       # Gemini text-embedding-004 (thay OpenAI 1536d)
 
 class QdrantService:
     def __init__(self):
-        self.client = AsyncQdrantClient(url=settings.qdrant_url)
+        # Truyền api_key nếu có (Qdrant Cloud), bỏ qua nếu local
+        self.client = AsyncQdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key or None,
+        )
         self._collections_ready = False
 
     async def ensure_collections(self):

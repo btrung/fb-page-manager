@@ -12,7 +12,10 @@ class Settings(BaseSettings):
     embedding_dim: int = 768
 
     # Qdrant — vector database
+    # Local: http://localhost:6333  (không cần api_key)
+    # Cloud: https://xxx.qdrant.io:6333  (cần api_key)
     qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str = ""          # để trống nếu dùng local
     qdrant_collection_posts: str = "post_embeddings"
     qdrant_collection_images: str = "product_images"
 

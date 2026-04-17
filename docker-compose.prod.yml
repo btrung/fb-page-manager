@@ -1,5 +1,5 @@
 # =============================================
-# PRODUCTION — nginx reverse proxy, no exposed ports except 80
+# PRODUCTION — nginx reverse proxy
 # Dùng: docker compose -f docker-compose.prod.yml up -d
 # =============================================
 
@@ -8,7 +8,7 @@ name: fb-page-manager
 services:
 
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: fbpagemanager
       POSTGRES_USER: fbadmin
@@ -21,14 +21,6 @@ services:
       retries: 5
     restart: always
 
-  nginx:
-    build: ./nginx
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
-    restart: always
-
   redis:
     image: redis:7-alpine
     volumes:
@@ -37,6 +29,20 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       retries: 3
+    restart: always
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: always
+
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
     restart: always
 
   backend:
@@ -57,15 +63,36 @@ services:
         condition: service_healthy
     restart: always
 
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: ["node", "workers/index.js"]
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - AI_SERVICE_URL=http://ai-service:8000
+      - DATABASE_URL=postgresql://fbadmin:fbpassword@postgres:5432/fbpagemanager
+    env_file:
+      - ./backend/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: always
+
   ai-service:
     build: ./ai-service
-    volumes:
-      - ai_chroma_data:/app/chroma_data
+    environment:
+      - QDRANT_URL=http://qdrant:6333
     env_file:
       - ./ai-service/.env
+    depends_on:
+      - qdrant
     restart: always
 
 volumes:
   redis_data:
-  ai_chroma_data:
   postgres_data:
+  qdrant_data:
