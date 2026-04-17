@@ -5,10 +5,7 @@ const PageCard = ({ page }) => {
   const navigate = useNavigate();
 
   return (
-    <div
-      onClick={() => navigate(`/pages/${page.id}/posts`)}
-      className="card cursor-pointer hover:shadow-md hover:border-facebook-blue/30 transition-all duration-200 flex items-center gap-4"
-    >
+    <div className="card hover:shadow-md hover:border-facebook-blue/30 transition-all duration-200 flex items-center gap-4">
       {/* Avatar page */}
       <div className="flex-shrink-0">
         {page.picture ? (
@@ -32,13 +29,25 @@ const PageCard = ({ page }) => {
         <p className="text-sm text-gray-500">{page.category}</p>
         <p className="text-xs text-gray-400 mt-0.5">
           {page.fanCount.toLocaleString('vi-VN')} người theo dõi
+          {page.savedPostCount > 0 && ` · ${page.savedPostCount} posts trong DB`}
         </p>
       </div>
 
-      {/* Arrow */}
-      <svg className="w-5 h-5 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-      </svg>
+      {/* Action buttons */}
+      <div className="flex gap-2 flex-shrink-0">
+        <button
+          onClick={() => navigate(`/pages/${page.id}/intelligence`)}
+          className="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 transition-colors"
+        >
+          🧠 Intelligence
+        </button>
+        <button
+          onClick={() => navigate(`/pages/${page.id}/posts`)}
+          className="px-3 py-1.5 border border-gray-200 text-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 transition-colors"
+        >
+          Posts
+        </button>
+      </div>
     </div>
   );
 };

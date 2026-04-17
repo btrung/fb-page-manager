@@ -35,4 +35,30 @@ export const pagesApi = {
     api.post(`/api/pages/${pageId}/analyze`, { posts }),
 };
 
+export const intelligenceApi = {
+  triggerCrawl: (pageId, limit = 500) =>
+    api.post('/api/intelligence/crawl', { pageId, limit }),
+
+  getJobStatus: (jobId) =>
+    api.get(`/api/intelligence/status/${jobId}`),
+
+  getSummary: () =>
+    api.get('/api/intelligence/summary'),
+
+  getProducts: ({ limit = 50, offset = 0, search = '' } = {}) =>
+    api.get('/api/intelligence/products', { params: { limit, offset, search } }),
+
+  getPosts: ({ pageId, saleOnly = false, limit = 50, offset = 0 } = {}) =>
+    api.get('/api/intelligence/posts', { params: { pageId, saleOnly, limit, offset } }),
+
+  getLogs: (pageId, limit = 20) =>
+    api.get('/api/intelligence/logs', { params: { pageId, limit } }),
+
+  getDebugDb: () =>
+    api.get('/api/intelligence/debug/db'),
+
+  retryEmbeddings: () =>
+    api.post('/api/intelligence/retry-embeddings'),
+};
+
 export default api;

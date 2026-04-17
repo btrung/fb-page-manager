@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import PostsPage from './pages/PostsPage';
+import IntelligencePage from './pages/IntelligencePage';
 import LoadingSpinner from './components/LoadingSpinner';
 
 // Route chỉ dành cho user đã login
@@ -44,6 +45,14 @@ const AppRoutes = () => (
       element={
         <PrivateRoute>
           <PostsPage />
+        </PrivateRoute>
+      }
+    />
+    <Route
+      path="/pages/:pageId/intelligence"
+      element={
+        <PrivateRoute>
+          <IntelligencePage />
         </PrivateRoute>
       }
     />
