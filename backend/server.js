@@ -10,6 +10,7 @@ const path = require('path');
 
 const authRoutes = require('./routes/auth');
 const apiRoutes = require('./routes/api');
+const intelligenceRoutes = require('./routes/intelligence');
 const { requireAuth } = require('./middleware/authMiddleware');
 
 const app = express();
@@ -68,6 +69,7 @@ app.use(session({
 // =============================================
 app.use('/auth', authRoutes);
 app.use('/api', requireAuth, apiRoutes);
+app.use('/api/intelligence', requireAuth, intelligenceRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', env: process.env.NODE_ENV });
