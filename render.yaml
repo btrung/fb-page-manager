@@ -1,24 +1,16 @@
 # =============================================
-# Render.com — Infrastructure as Code (FREE TIER)
-# Deploy: https://dashboard.render.com/select-repo
-#
-# Services (free):
-#  1. backend   — Node.js API + React static + BullMQ workers (in-process)
-#  2. ai-service — Python Gemini + CLIP
-#  3. redis     — session store + job queue
+# Render.com — Free Tier (no credit card needed for these services)
+# Services:
+#  1. backend   — Node.js API + React + in-process background jobs
+#  2. ai-service — Python Gemini
+#  3. redis     — session store
 #  4. postgres  — PostgreSQL 16 với pgvector
-#
-# Qdrant Cloud free tier (external):
-#  → https://cloud.qdrant.io → tạo free cluster
-#  → Điền QDRANT_URL và QDRANT_API_KEY vào Render Dashboard
 # =============================================
 
 services:
 
   # =========================================
-  # 1. BACKEND (API + React + Workers)
-  #    Workers chạy in-process qua START_WORKERS=true
-  #    Không cần paid background worker service
+  # 1. BACKEND
   # =========================================
   - type: web
     name: fb-page-manager
@@ -31,48 +23,33 @@ services:
       - key: NODE_ENV
         value: production
 
-      # Workers chạy trong cùng process — không cần paid worker service
-      - key: START_WORKERS
-        value: "true"
-
-      # Facebook App — điền trong Render Dashboard
       - key: FACEBOOK_APP_ID
         sync: false
       - key: FACEBOOK_APP_SECRET
         sync: false
-
-      # Sau khi deploy xong, copy URL của service này vào đây
       - key: FACEBOOK_CALLBACK_URL
-        sync: false   # https://fb-page-manager.onrender.com/auth/facebook/callback
+        sync: false
       - key: FRONTEND_URL
-        sync: false   # https://fb-page-manager.onrender.com
-
+        sync: false
       - key: SESSION_SECRET
         generateValue: true
 
-      # Tự lấy từ Redis service bên dưới
       - key: REDIS_URL
         fromService:
           type: redis
           name: fb-page-manager-redis
           property: connectionString
 
-      # URL của ai-service — điền sau khi ai-service deploy xong
       - key: AI_SERVICE_URL
-        sync: false   # https://fb-page-manager-ai.onrender.com
+        sync: false
 
-      # Tự lấy từ PostgreSQL database bên dưới
       - key: DATABASE_URL
         fromDatabase:
           name: fb-page-manager-db
           property: connectionString
 
-      # Webhook FB (optional)
-      - key: FB_WEBHOOK_VERIFY_TOKEN
-        sync: false
-
   # =========================================
-  # 2. AI SERVICE (Python — Gemini + CLIP)
+  # 2. AI SERVICE
   # =========================================
   - type: web
     name: fb-page-manager-ai
@@ -83,35 +60,27 @@ services:
     envVars:
       - key: HOST
         value: 0.0.0.0
-
-      # Google Gemini — https://aistudio.google.com/app/apikey
       - key: GEMINI_API_KEY
         sync: false
       - key: VISION_MODEL
         value: gemini-1.5-flash
       - key: EMBEDDING_MODEL
         value: models/text-embedding-004
-
-      # Qdrant Cloud — https://cloud.qdrant.io (free 1GB)
       - key: QDRANT_URL
         sync: false
       - key: QDRANT_API_KEY
         sync: false
 
   # =========================================
-  # 3. REDIS
+  # 3. REDIS (session store)
   # =========================================
   - type: redis
     name: fb-page-manager-redis
     plan: free
     maxmemoryPolicy: allkeys-lru
-    ipAllowList: []   # chỉ cho phép internal Render services
+    ipAllowList: []
 
 databases:
-
-  # =========================================
-  # 4. POSTGRESQL 16 (có pgvector extension)
-  # =========================================
   - name: fb-page-manager-db
     plan: free
     databaseName: fbpagemanager

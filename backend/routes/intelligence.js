@@ -13,8 +13,8 @@
 const express = require('express');
 const router = express.Router();
 
-const { addCrawlJob, getCrawlJobStatus, getCrawlQueueStats } = require('../queues/crawlQueue');
-const { retryFailedEmbeddingJobs, getEmbeddingQueueStats } = require('../queues/embeddingQueue');
+const { createJob, getJob, runBackground } = require('../queues/jobManager');
+const { processCrawlJob } = require('../workers/crawlWorker');
 const {
   getProductsByUser,
   countProductsByUser,
@@ -51,25 +51,11 @@ router.post('/crawl', async (req, res, next) => {
   const safeLimit = Math.min(Math.max(parseInt(limit) || 500, 10), 1000);
 
   try {
-    const { jobId, alreadyRunning, state } = await addCrawlJob({
-      userId,
-      pageId,
-      pageAccessToken,
-      limit: safeLimit,
-      triggeredBy: 'manual',
-    });
-
-    if (alreadyRunning) {
-      return res.json({
-        message: `Job crawl cho page này đang ${state}. Chờ xong trước khi chạy lại.`,
-        jobId,
-        alreadyRunning: true,
-        state,
-      });
-    }
+    const jobId = createJob({ userId, pageId, pageAccessToken, limit: safeLimit });
+    runBackground(jobId, processCrawlJob);
 
     res.json({
-      message: `Đã thêm job crawl ${safeLimit} posts vào queue`,
+      message: `Đã bắt đầu crawl ${safeLimit} posts`,
       jobId,
       pageId,
       limit: safeLimit,
@@ -85,13 +71,9 @@ router.post('/crawl', async (req, res, next) => {
 // =============================================
 router.get('/status/:jobId', async (req, res, next) => {
   try {
-    const status = await getCrawlJobStatus(req.params.jobId);
-
-    if (!status.found) {
-      return res.status(404).json({ error: 'Không tìm thấy job' });
-    }
-
-    res.json(status);
+    const job = getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Không tìm thấy job' });
+    res.json({ found: true, ...job });
   } catch (err) {
     next({ status: 500, message: err.message });
   }
@@ -235,19 +217,13 @@ router.get('/summary', async (req, res, next) => {
 router.get('/debug/db', async (req, res, next) => {
   const { id: userId } = req.session.user;
   try {
-    const [summary, crawlStats, embedStats, pendingMedia] = await Promise.all([
+    const [summary, pendingMedia] = await Promise.all([
       getIntelligenceSummary(userId),
-      getCrawlQueueStats(),
-      getEmbeddingQueueStats(),
       getPendingMedia(userId, 10),
     ]);
 
     res.json({
       db: summary,
-      queues: {
-        crawl: crawlStats,
-        embedding: embedStats,
-      },
       pendingMediaSample: pendingMedia.map((m) => ({
         mediaId: m.media_id,
         postId: m.post_id,
@@ -260,17 +236,5 @@ router.get('/debug/db', async (req, res, next) => {
   }
 });
 
-// =============================================
-// POST /api/intelligence/retry-embeddings
-// Retry tất cả failed embedding jobs
-// =============================================
-router.post('/retry-embeddings', async (req, res, next) => {
-  try {
-    const retried = await retryFailedEmbeddingJobs();
-    res.json({ message: `Đã retry ${retried} embedding jobs`, retried });
-  } catch (err) {
-    next({ status: 500, message: err.message });
-  }
-});
 
 module.exports = router;
