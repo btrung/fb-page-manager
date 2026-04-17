@@ -129,6 +129,7 @@ services:
     name: fb-page-manager-redis
     plan: free
     maxmemoryPolicy: allkeys-lru
+    ipAllowList: []   # chỉ cho phép internal Render services truy cập
 
 databases:
 
