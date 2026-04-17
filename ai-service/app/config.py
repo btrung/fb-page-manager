@@ -2,10 +2,14 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # OpenAI — text embeddings + vision LLM
-    openai_api_key: str
-    embedding_model: str = "text-embedding-3-small"
-    vision_model: str = "gpt-4o-mini"
+    # Google Gemini — thay thế OpenAI, có free tier
+    gemini_api_key: str
+    # gemini-1.5-flash: free 15 RPM, hỗ trợ vision
+    vision_model: str = "gemini-1.5-flash"
+    # text-embedding-004: free, 768d
+    embedding_model: str = "models/text-embedding-004"
+    # Dimension của Gemini text embedding (khác OpenAI 1536d)
+    embedding_dim: int = 768
 
     # Qdrant — vector database
     qdrant_url: str = "http://localhost:6333"

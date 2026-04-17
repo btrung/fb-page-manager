@@ -45,8 +45,8 @@ ALTER TABLE posts ADD COLUMN IF NOT EXISTS price                   INTEGER   DEF
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS what_is_product         TEXT      DEFAULT NULL;
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS what_is_promotion       TEXT      DEFAULT NULL;
 
--- Vector embedding cho nội dung post (OpenAI text-embedding-3-small = 1536d)
-ALTER TABLE posts ADD COLUMN IF NOT EXISTS post_embedding          vector(1536);
+-- Vector embedding cho nội dung post (Gemini text-embedding-004 = 768d)
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS post_embedding          vector(768);
 
 -- Tracking
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS synced_time             TIMESTAMPTZ DEFAULT NOW();

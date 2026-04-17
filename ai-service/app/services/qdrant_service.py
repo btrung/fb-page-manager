@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Kích thước vector theo model
 CLIP_DIM = 512       # CLIP ViT-B/32
-TEXT_DIM = 1536      # OpenAI text-embedding-3-small
+TEXT_DIM = 768       # Gemini text-embedding-004 (thay OpenAI 1536d)
 
 
 class QdrantService:

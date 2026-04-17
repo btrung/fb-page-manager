@@ -8,11 +8,10 @@ pydantic-settings==2.1.0
 # =============================================
 # AI / Embeddings
 # =============================================
-# OpenAI — text embeddings + vision LLM (GPT-4o)
-openai==1.10.0
+# Google Gemini — LLM extraction (vision) + text embeddings (free tier)
+google-generativeai==0.8.3
 
 # sentence-transformers — CLIP image embeddings (CPU-friendly)
-# Kéo theo torch CPU tự động
 sentence-transformers==2.6.1
 
 # Xử lý ảnh trong RAM (BytesIO, resize)
@@ -25,7 +24,6 @@ aiohttp==3.9.3
 # =============================================
 # Vector DB
 # =============================================
-# Qdrant — thay thế ChromaDB, hỗ trợ tốt hơn cho production
 qdrant-client==1.8.2
 
 # =============================================
