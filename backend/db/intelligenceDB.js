@@ -433,4 +433,36 @@ module.exports = {
   getCrawlLogs,
   // Stats
   getIntelligenceSummary,
+  // Delete
+  deleteUserData,
 };
+
+// =============================================
+// DELETE USER DATA
+// =============================================
+async function deleteUserData(userId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const r1 = await client.query(`DELETE FROM product_media_vectors WHERE page_id IN (SELECT DISTINCT page_id FROM posts WHERE user_id = $1)`, [userId]);
+    const r2 = await client.query(`DELETE FROM post_products WHERE post_id IN (SELECT id FROM posts WHERE user_id = $1)`, [userId]);
+    const r3 = await client.query(`DELETE FROM product_from_posts  WHERE user_id = $1`, [userId]);
+    const r4 = await client.query(`DELETE FROM post_media          WHERE user_id = $1`, [userId]);
+    const r5 = await client.query(`DELETE FROM crawl_logs          WHERE user_id = $1`, [userId]);
+    const r6 = await client.query(`DELETE FROM posts               WHERE user_id = $1`, [userId]);
+    await client.query('COMMIT');
+    return {
+      product_media_vectors: r1.rowCount,
+      post_products: r2.rowCount,
+      product_from_posts: r3.rowCount,
+      post_media: r4.rowCount,
+      crawl_logs: r5.rowCount,
+      posts: r6.rowCount,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}

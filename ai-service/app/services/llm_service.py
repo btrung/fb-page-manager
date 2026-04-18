@@ -1,26 +1,18 @@
 """
 LLM Service — trích xuất thông tin sản phẩm từ Facebook posts
-Dùng Google Gemini 1.5 Flash (free tier) với vision để xử lý text + ảnh
-Ảnh chỉ tồn tại trong RAM → PIL Image → Gemini → xoá ngay
+Flow: ảnh → EasyOCR → text → ghép post text → Qwen (text only, OpenRouter)
 """
 import asyncio
-import io
 import json
 import logging
 from typing import Optional
 
 import aiohttp
-import google.generativeai as genai
-from PIL import Image
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Cấu hình Gemini API key
-genai.configure(api_key=settings.gemini_api_key)
-
-# Kết quả mặc định khi không thể trích xuất
 _EMPTY_RESULT = {
     "extracted_product_name": None,
     "price": None,
@@ -50,107 +42,89 @@ Quy tắc:
 - product_count: đếm số LOẠI sản phẩm khác nhau
 - Chỉ trả về JSON thuần túy, không markdown, không giải thích"""
 
-# Giới hạn concurrent downloads ảnh
-_DOWNLOAD_SEMAPHORE = asyncio.Semaphore(5)
+_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+_SEM = asyncio.Semaphore(3)
 
 
 class LLMService:
-    def __init__(self):
-        self.model = genai.GenerativeModel(
-            model_name=settings.vision_model,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                temperature=0.1,
-                max_output_tokens=300,
-            ),
-        )
-
-    async def _download_pil_image(
-        self, url: str, session: aiohttp.ClientSession
-    ) -> Optional[Image.Image]:
-        """
-        Download ảnh → PIL Image trong RAM.
-        Resize 512px để giảm token. Trả về None nếu lỗi.
-        """
-        async with _DOWNLOAD_SEMAPHORE:
-            try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                    if resp.status != 200:
-                        return None
-                    if "image" not in resp.headers.get("Content-Type", ""):
-                        return None
-                    raw = await resp.read()
-
-                buf = io.BytesIO(raw)
-                img = Image.open(buf).convert("RGB")
-                img.thumbnail((512, 512), Image.LANCZOS)
-                del raw, buf
-                return img
-
-            except Exception as e:
-                logger.warning(f"[LLM] Không tải được ảnh {url[:60]}: {e}")
-                return None
 
     async def extract_post(
         self, post_text: str, image_urls: list[str] = None
     ) -> dict:
-        """
-        Trích xuất thông tin sản phẩm từ 1 post.
-        Luôn trả về dict với 6 fields, không raise exception.
-        """
         if not post_text or not post_text.strip():
             return {**_EMPTY_RESULT}
 
-        image_urls = (image_urls or [])[:3]  # Tối đa 3 ảnh
+        image_urls = image_urls or []
+        logger.info(f"[LLM] post text={post_text[:150]!r} | images={image_urls}")
 
-        logger.info(f"[LLM] Xử lý post | text={post_text[:150]!r} | images={image_urls}")
+        # Bước 1: OCR ảnh → ghép vào text
+        full_text = post_text
+        if image_urls:
+            from app.services.ocr_service import ocr_service
+            ocr_text = await ocr_service.extract_from_urls(image_urls)
+            if ocr_text:
+                full_text = post_text + "\n[Text trong ảnh]: " + ocr_text
+                logger.info(f"[OCR→LLM] OCR text: {ocr_text[:150]}")
+
+        # Bước 2: Gửi full_text vào Qwen
+        payload = {
+            "model": settings.qwen_model,
+            "messages": [
+                {"role": "system", "content": "Bạn là AI trích xuất thông tin sản phẩm từ bài đăng Facebook. Chỉ trả về JSON."},
+                {"role": "user", "content": f"{_SYSTEM_PROMPT}\n\nNội dung bài đăng:\n{full_text[:4000]}"},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 300,
+        }
+
+        headers = {
+            "Authorization": f"Bearer {settings.openrouter_api_key}",
+            "Content-Type": "application/json",
+        }
 
         try:
-            # Xây dựng content parts cho Gemini
-            parts = [
-                f"{_SYSTEM_PROMPT}\n\nNội dung bài đăng:\n{post_text[:3000]}"
-            ]
+            data = None
+            async with _SEM:
+                for attempt in range(4):
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            _OPENROUTER_URL,
+                            json=payload,
+                            headers=headers,
+                            timeout=aiohttp.ClientTimeout(total=30),
+                        ) as resp:
+                            if resp.status == 429:
+                                wait = 2 ** attempt
+                                logger.warning(f"[LLM] 429 rate limit, retry sau {wait}s (attempt {attempt+1}/4)")
+                                await asyncio.sleep(wait)
+                                continue
+                            if resp.status != 200:
+                                text = await resp.text()
+                                logger.error(f"[LLM] OpenRouter lỗi {resp.status}: {text[:200]}")
+                                return {**_EMPTY_RESULT}
+                            data = await resp.json()
+                            break
+            if data is None:
+                logger.error("[LLM] Hết retry, bỏ qua post này")
+                return {**_EMPTY_RESULT}
 
-            # Download ảnh song song rồi đưa PIL Image vào prompt
-            if image_urls:
-                async with aiohttp.ClientSession() as session:
-                    tasks = [self._download_pil_image(url, session) for url in image_urls]
-                    images = await asyncio.gather(*tasks)
+            raw = data["choices"][0]["message"]["content"].strip()
+            logger.info(f"[LLM] Qwen trả về: {raw[:300]}")
 
-                loaded = sum(1 for img in images if img is not None)
-                logger.info(f"[LLM] Tải ảnh: {loaded}/{len(image_urls)} thành công")
-                for img in images:
-                    if img is not None:
-                        parts.append(img)
-
-            # Gọi Gemini (chạy trong thread pool để không block event loop)
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, lambda: self.model.generate_content(parts)
-            )
-
-            # Giải phóng ảnh trong RAM
-            for p in parts:
-                if isinstance(p, Image.Image):
-                    del p
-
-            raw = response.text.strip()
-            logger.info(f"[LLM] Gemini trả về: {raw[:300]}")
-            # Bỏ markdown code block nếu model trả về ```json ... ```
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
                     raw = raw[4:]
                 raw = raw.strip()
 
-            data = json.loads(raw)
+            parsed = json.loads(raw)
             return {
-                "extracted_product_name": _to_str_or_none(data.get("extracted_product_name")),
-                "price":                  _to_int_or_none(data.get("price")),
-                "what_is_product":        _to_str_or_none(data.get("what_is_product")),
-                "product_count":          max(0, int(data.get("product_count") or 0)),
-                "is_sale_post":           bool(data.get("is_sale_post", False)),
-                "what_is_promotion":      _to_str_or_none(data.get("what_is_promotion")),
+                "extracted_product_name": _to_str_or_none(parsed.get("extracted_product_name")),
+                "price":                  _to_int_or_none(parsed.get("price")),
+                "what_is_product":        _to_str_or_none(parsed.get("what_is_product")),
+                "product_count":          max(0, int(parsed.get("product_count") or 0)),
+                "is_sale_post":           bool(parsed.get("is_sale_post", False)),
+                "what_is_promotion":      _to_str_or_none(parsed.get("what_is_promotion")),
             }
 
         except Exception as e:
@@ -158,11 +132,7 @@ class LLMService:
             return {**_EMPTY_RESULT}
 
     async def extract_posts_batch(self, posts: list[dict]) -> list[dict]:
-        """
-        Xử lý nhiều posts song song.
-        Gemini free tier: 15 RPM → semaphore giới hạn 10 concurrent.
-        """
-        sem = asyncio.Semaphore(10)
+        sem = asyncio.Semaphore(3)
 
         async def _safe(post: dict) -> dict:
             async with sem:
@@ -173,10 +143,6 @@ class LLMService:
 
         return await asyncio.gather(*[_safe(p) for p in posts])
 
-
-# =============================================
-# Helpers
-# =============================================
 
 def _to_str_or_none(val) -> Optional[str]:
     if val is None:

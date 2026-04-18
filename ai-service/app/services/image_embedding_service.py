@@ -43,41 +43,38 @@ class ImageEmbeddingService:
                 return None
 
     async def _describe_image(self, img: Image.Image) -> Optional[str]:
-        """Dùng Gemini Vision để mô tả ảnh sản phẩm ngắn gọn."""
-        import google.generativeai as genai
-        genai.configure(api_key=settings.gemini_api_key)
-        model = genai.GenerativeModel(settings.vision_model)
-
+        from google import genai as _genai
+        _c = _genai.Client(api_key=settings.gemini_api_key)
         loop = asyncio.get_event_loop()
-
-        def _call():
-            prompt = "Mô tả ngắn gọn sản phẩm trong ảnh này bằng tiếng Anh (tối đa 50 từ): tên sản phẩm, màu sắc, đặc điểm nổi bật."
-            response = model.generate_content([prompt, img])
-            return response.text.strip()
-
+        prompt = "Mô tả ngắn gọn sản phẩm trong ảnh này bằng tiếng Anh (tối đa 50 từ): tên sản phẩm, màu sắc, đặc điểm nổi bật."
         try:
-            return await loop.run_in_executor(None, _call)
+            response = await loop.run_in_executor(
+                None,
+                lambda: _c.models.generate_content(
+                    model=settings.vision_model,
+                    contents=[prompt, img],
+                )
+            )
+            return response.text.strip()
         except Exception as e:
             logger.warning(f"[IMG] Gemini vision thất bại: {e}")
             return None
 
     async def _embed_text(self, text: str) -> Optional[list[float]]:
-        """Embed text description bằng Gemini text-embedding-004."""
-        import google.generativeai as genai
-        genai.configure(api_key=settings.gemini_api_key)
-
+        from google import genai as _genai
+        from google.genai.types import EmbedContentConfig
+        _c = _genai.Client(api_key=settings.gemini_api_key)
         loop = asyncio.get_event_loop()
-
-        def _call():
-            result = genai.embed_content(
-                model=settings.embedding_model,
-                content=text,
-                task_type="retrieval_document",
-            )
-            return result["embedding"]
-
         try:
-            return await loop.run_in_executor(None, _call)
+            result = await loop.run_in_executor(
+                None,
+                lambda: _c.models.embed_content(
+                    model=settings.embedding_model,
+                    contents=text,
+                    config=EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+                )
+            )
+            return result.embeddings[0].values
         except Exception as e:
             logger.error(f"[EMBED] text embed thất bại: {e}")
             return None

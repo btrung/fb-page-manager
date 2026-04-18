@@ -22,6 +22,7 @@ const {
   getCrawlLogs,
   getIntelligenceSummary,
   getPendingMedia,
+  deleteUserData,
 } = require('../db/intelligenceDB');
 const { pool } = require('../db/migrate');
 
@@ -236,5 +237,19 @@ router.get('/debug/db', async (req, res, next) => {
   }
 });
 
+
+// =============================================
+// DELETE /api/intelligence/data
+// Xóa toàn bộ data của user hiện tại
+// =============================================
+router.delete('/data', async (req, res, next) => {
+  const { id: userId } = req.session.user;
+  try {
+    const result = await deleteUserData(userId);
+    res.json({ message: 'Đã xóa toàn bộ dữ liệu', deleted: result });
+  } catch (err) {
+    next({ status: 500, message: err.message });
+  }
+});
 
 module.exports = router;

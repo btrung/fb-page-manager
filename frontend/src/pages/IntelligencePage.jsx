@@ -40,6 +40,7 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
   const [jobStatus, setJobStatus] = useState(null);
   const [crawling, setCrawling] = useState(false);
   const [error, setError]       = useState('');
+  const [deleting, setDeleting] = useState(false);
   const pollRef = useRef(null);
 
   // Dừng polling khi unmount
@@ -63,6 +64,20 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
       }
     }, 2000); // Poll mỗi 2 giây
   }, [onCrawlComplete]);
+
+  const handleDelete = async () => {
+    if (!window.confirm('Xóa toàn bộ dữ liệu của bạn? Hành động này không thể hoàn tác.')) return;
+    setDeleting(true);
+    setError('');
+    try {
+      await intelligenceApi.deleteAllData();
+      onCrawlComplete?.();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Lỗi khi xóa dữ liệu');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleCrawl = async () => {
     setError('');
@@ -103,14 +118,24 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
             Thu thập 500 bài đăng, trích xuất sản phẩm bằng AI
           </p>
         </div>
-        <button
-          onClick={handleCrawl}
-          disabled={crawling}
-          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-        >
-          {crawling && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-          {crawling ? 'Đang chạy...' : '🚀 Crawl 500 Posts'}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={handleDelete}
+            disabled={deleting || crawling}
+            className="px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+          >
+            {deleting && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            {deleting ? 'Đang xóa...' : '🗑️ Xóa dữ liệu'}
+          </button>
+          <button
+            onClick={handleCrawl}
+            disabled={crawling}
+            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+          >
+            {crawling && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            {crawling ? 'Đang chạy...' : '🚀 Crawl 500 Posts'}
+          </button>
+        </div>
       </div>
 
       {/* Progress */}

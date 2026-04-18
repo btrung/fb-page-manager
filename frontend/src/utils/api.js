@@ -59,6 +59,9 @@ export const intelligenceApi = {
 
   retryEmbeddings: () =>
     api.post('/api/intelligence/retry-embeddings'),
+
+  deleteAllData: () =>
+    api.delete('/api/intelligence/data'),
 };
 
 export default api;

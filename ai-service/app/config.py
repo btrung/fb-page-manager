@@ -2,12 +2,14 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # Google Gemini — thay thế OpenAI, có free tier
+    # Google Gemini — chỉ dùng cho embeddings
     gemini_api_key: str
-    # gemini-1.5-flash: free 15 RPM, hỗ trợ vision
-    vision_model: str = "gemini-1.5-flash"
-    # text-embedding-004: free, 768d
-    embedding_model: str = "models/text-embedding-004"
+    vision_model: str = "gemini-2.0-flash"
+    embedding_model: str = "text-embedding-004"
+
+    # OpenRouter — dùng cho LLM extraction (Qwen)
+    openrouter_api_key: str = ""
+    qwen_model: str = "qwen/qwen3-next-80b-a3b-instruct:free"
     # Dimension của Gemini text embedding (khác OpenAI 1536d)
     embedding_dim: int = 768
 
