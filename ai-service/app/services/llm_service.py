@@ -103,6 +103,8 @@ class LLMService:
 
         image_urls = (image_urls or [])[:3]  # Tối đa 3 ảnh
 
+        logger.info(f"[LLM] Xử lý post | text={post_text[:150]!r} | images={image_urls}")
+
         try:
             # Xây dựng content parts cho Gemini
             parts = [
@@ -115,6 +117,8 @@ class LLMService:
                     tasks = [self._download_pil_image(url, session) for url in image_urls]
                     images = await asyncio.gather(*tasks)
 
+                loaded = sum(1 for img in images if img is not None)
+                logger.info(f"[LLM] Tải ảnh: {loaded}/{len(image_urls)} thành công")
                 for img in images:
                     if img is not None:
                         parts.append(img)
@@ -131,6 +135,7 @@ class LLMService:
                     del p
 
             raw = response.text.strip()
+            logger.info(f"[LLM] Gemini trả về: {raw[:300]}")
             # Bỏ markdown code block nếu model trả về ```json ... ```
             if raw.startswith("```"):
                 raw = raw.split("```")[1]

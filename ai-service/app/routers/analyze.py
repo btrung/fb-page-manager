@@ -6,9 +6,6 @@ from app.services.vector_service import vector_service
 router = APIRouter(prefix="/analyze", tags=["analyze"])
 
 
-# =============================================
-# Schemas
-# =============================================
 class PostItem(BaseModel):
     id: str
     message: str = ""
@@ -29,10 +26,6 @@ class SearchRequest(BaseModel):
     top_k: int = 5
 
 
-# =============================================
-# POST /analyze/posts
-# Nhận posts từ Node.js, embed và lưu vào ChromaDB
-# =============================================
 @router.post("/posts")
 async def analyze_posts(body: AnalyzePostsRequest):
     if not body.posts:
@@ -40,13 +33,11 @@ async def analyze_posts(body: AnalyzePostsRequest):
 
     posts_dict = [p.model_dump() for p in body.posts]
 
-    # Embed tất cả posts (batch call)
     try:
         embeddings = await embedding_service.embed_posts(posts_dict)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Embedding failed: {str(e)}")
 
-    # Chuẩn bị data cho ChromaDB
     post_ids = [p.id for p in body.posts]
     documents = [p.message or "(no text)" for p in body.posts]
     metadatas = [
@@ -55,12 +46,12 @@ async def analyze_posts(body: AnalyzePostsRequest):
             "user_id": body.user_id,
             "created_time": p.created_time,
             "has_image": bool(p.picture),
+            "content": p.message or "(no text)",
         }
         for p in body.posts
     ]
 
-    # Lưu vào vector DB
-    count = vector_service.upsert_posts(
+    count = await vector_service.upsert_posts(
         user_id=body.user_id,
         page_id=body.page_id,
         post_ids=post_ids,
@@ -77,10 +68,6 @@ async def analyze_posts(body: AnalyzePostsRequest):
     }
 
 
-# =============================================
-# POST /analyze/search
-# Tìm bài đăng tương tự theo nội dung
-# =============================================
 @router.post("/search")
 async def search_posts(body: SearchRequest):
     try:
@@ -88,29 +75,17 @@ async def search_posts(body: SearchRequest):
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Embedding failed: {str(e)}")
 
-    results = vector_service.search_similar(
+    results = await vector_service.search_similar(
         user_id=body.user_id,
         page_id=body.page_id,
         query_embedding=query_embedding,
         top_k=body.top_k,
     )
 
-    return {
-        "query": body.query,
-        "results": results,
-        "total": len(results),
-    }
+    return {"query": body.query, "results": results, "total": len(results)}
 
 
-# =============================================
-# GET /analyze/stats/{user_id}/{page_id}
-# Thống kê số posts đã index
-# =============================================
 @router.get("/stats/{user_id}/{page_id}")
 async def get_stats(user_id: str, page_id: str):
-    count = vector_service.get_collection_count(user_id, page_id)
-    return {
-        "user_id": user_id,
-        "page_id": page_id,
-        "indexed_posts": count,
-    }
+    count = await vector_service.get_collection_count(user_id, page_id)
+    return {"user_id": user_id, "page_id": page_id, "indexed_posts": count}

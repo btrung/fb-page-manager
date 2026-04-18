@@ -11,9 +11,6 @@ pydantic-settings==2.1.0
 # Google Gemini — LLM extraction (vision) + text embeddings (free tier)
 google-generativeai==0.8.3
 
-# sentence-transformers — CLIP image embeddings (CPU-friendly)
-sentence-transformers==2.6.1
-
 # Xử lý ảnh trong RAM (BytesIO, resize)
 Pillow==10.2.0
 

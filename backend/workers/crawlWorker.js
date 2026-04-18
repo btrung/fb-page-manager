@@ -128,9 +128,24 @@ const callLLMBatch = async (posts) => {
     })),
   };
 
+  // Log input gửi LLM
+  for (const p of payload.posts) {
+    console.log(`[LLM INPUT] post_id=${p.post_id}`);
+    console.log(`  text: ${p.text.slice(0, 200)}${p.text.length > 200 ? '...' : ''}`);
+    console.log(`  image_urls (${p.image_urls.length}): ${p.image_urls.join(', ') || '(none)'}`);
+  }
+
   const response = await axios.post(`${AI_SERVICE_URL}/extract/batch`, payload, {
-    timeout: 120000, // 2 phút cho batch 20 posts với vision
+    timeout: 120000,
   });
+
+  // Log output LLM trả về
+  for (const r of response.data.results || []) {
+    console.log(`[LLM OUTPUT] post_id=${r.post_id}`);
+    console.log(`  is_sale_post=${r.is_sale_post} | product="${r.extracted_product_name}" | price=${r.price} | count=${r.product_count}`);
+    console.log(`  what_is_product: ${r.what_is_product || '(null)'}`);
+    console.log(`  what_is_promotion: ${r.what_is_promotion || '(null)'}`);
+  }
 
   // Map kết quả về theo post_id
   const resultMap = {};

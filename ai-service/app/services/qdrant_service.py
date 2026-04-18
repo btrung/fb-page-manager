@@ -23,9 +23,9 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Kích thước vector theo model
-CLIP_DIM = 512       # CLIP ViT-B/32
-TEXT_DIM = 768       # Gemini text-embedding-004 (thay OpenAI 1536d)
+# Kích thước vector — tất cả dùng Gemini text-embedding-004 768d
+CLIP_DIM = 768
+TEXT_DIM = 768
 
 
 class QdrantService:

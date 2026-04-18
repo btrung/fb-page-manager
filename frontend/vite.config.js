@@ -7,15 +7,16 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    allowedHosts: ['unemerged-paroxytonic-leda.ngrok-free.dev'],
     proxy: {
       '/auth': {
         target: BACKEND_URL,
-        changeOrigin: false,
+        changeOrigin: true,
         secure: false,
       },
       '/api': {
         target: BACKEND_URL,
-        changeOrigin: false,
+        changeOrigin: true,
         secure: false,
       },
     },
