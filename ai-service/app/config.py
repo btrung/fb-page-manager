@@ -7,9 +7,8 @@ class Settings(BaseSettings):
     vision_model: str = "gemini-2.0-flash"
     embedding_model: str = "text-embedding-004"
 
-    # OpenRouter — dùng cho LLM extraction (Qwen)
-    openrouter_api_key: str = ""
-    qwen_model: str = "qwen/qwen3-next-80b-a3b-instruct:free"
+    # Gemini — dùng cho cả LLM extraction lẫn embeddings
+    llm_model: str = "gemini-2.0-flash"
     # Dimension của Gemini text embedding (khác OpenAI 1536d)
     embedding_dim: int = 768
 

@@ -1,17 +1,21 @@
 """
 LLM Service — trích xuất thông tin sản phẩm từ Facebook posts
-Flow: ảnh → EasyOCR → text → ghép post text → Qwen (text only, OpenRouter)
+Flow: text post → Gemini 1.5 Flash → JSON kết quả
+Ảnh KHÔNG gửi vào LLM — chỉ dùng để embedding ở bước sau
 """
 import asyncio
 import json
 import logging
 from typing import Optional
 
-import aiohttp
+from google import genai
+from google.genai import types
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+_client = genai.Client(api_key=settings.gemini_api_key)
 
 _EMPTY_RESULT = {
     "extracted_product_name": None,
@@ -42,113 +46,88 @@ Quy tắc:
 - product_count: đếm số LOẠI sản phẩm khác nhau
 - Chỉ trả về JSON thuần túy, không markdown, không giải thích"""
 
-_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-_SEM = asyncio.Semaphore(3)
+# Gemini 2.0 Flash free tier: 10 RPM = 1 req/6s → xử lý tuần tự
+_SEM = asyncio.Semaphore(1)
+_MIN_INTERVAL = 7.0  # giây giữa mỗi request
+_last_call_time = 0.0
 
 
 class LLMService:
 
-    async def extract_post(
-        self, post_text: str, image_urls: list[str] = None
-    ) -> dict:
+    async def extract_post(self, post_text: str, image_urls: list[str] = None) -> dict:
         if not post_text or not post_text.strip():
             return {**_EMPTY_RESULT}
 
-        image_urls = image_urls or []
-        logger.info(f"[LLM] post text={post_text[:150]!r} | images={image_urls}")
+        prompt = f"{_SYSTEM_PROMPT}\n\nNội dung bài đăng:\n{post_text[:4000]}"
 
-        # Bước 1: OCR ảnh → ghép vào text
-        full_text = post_text
-        if image_urls:
-            from app.services.ocr_service import ocr_service
-            ocr_text = await ocr_service.extract_from_urls(image_urls)
-            if ocr_text:
-                full_text = post_text + "\n[Text trong ảnh]: " + ocr_text
-                logger.info(f"[OCR→LLM] OCR text: {ocr_text[:150]}")
+        for attempt in range(4):
+            try:
+                async with _SEM:
+                    global _last_call_time
+                    now = asyncio.get_event_loop().time()
+                    wait = _MIN_INTERVAL - (now - _last_call_time)
+                    if wait > 0:
+                        await asyncio.sleep(wait)
+                    _last_call_time = asyncio.get_event_loop().time()
 
-        # Bước 2: Gửi full_text vào Qwen
-        payload = {
-            "model": settings.qwen_model,
-            "messages": [
-                {"role": "system", "content": "Bạn là AI trích xuất thông tin sản phẩm từ bài đăng Facebook. Chỉ trả về JSON."},
-                {"role": "user", "content": f"{_SYSTEM_PROMPT}\n\nNội dung bài đăng:\n{full_text[:4000]}"},
-            ],
-            "temperature": 0.1,
-            "max_tokens": 300,
-        }
+                    loop = asyncio.get_event_loop()
+                    response = await loop.run_in_executor(
+                        None,
+                        lambda: _client.models.generate_content(
+                            model=settings.llm_model,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                temperature=0.1,
+                                max_output_tokens=300,
+                            ),
+                        ),
+                    )
 
-        headers = {
-            "Authorization": f"Bearer {settings.openrouter_api_key}",
-            "Content-Type": "application/json",
-        }
+                raw = response.text.strip()
+                logger.info(f"[LLM] Gemini trả về: {raw[:300]}")
 
-        try:
-            data = None
-            async with _SEM:
-                for attempt in range(4):
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(
-                            _OPENROUTER_URL,
-                            json=payload,
-                            headers=headers,
-                            timeout=aiohttp.ClientTimeout(total=30),
-                        ) as resp:
-                            if resp.status == 429:
-                                wait = 2 ** attempt
-                                logger.warning(f"[LLM] 429 rate limit, retry sau {wait}s (attempt {attempt+1}/4)")
-                                await asyncio.sleep(wait)
-                                continue
-                            if resp.status != 200:
-                                text = await resp.text()
-                                logger.error(f"[LLM] OpenRouter lỗi {resp.status}: {text[:200]}")
-                                return {**_EMPTY_RESULT}
-                            data = await resp.json()
-                            break
-            if data is None:
-                logger.error("[LLM] Hết retry, bỏ qua post này")
+                if raw.startswith("```"):
+                    raw = raw.split("```")[1]
+                    if raw.startswith("json"):
+                        raw = raw[4:]
+                    raw = raw.strip()
+
+                parsed = json.loads(raw)
+                return {
+                    "extracted_product_name": _to_str_or_none(parsed.get("extracted_product_name")),
+                    "price":                  _to_int_or_none(parsed.get("price")),
+                    "what_is_product":        _to_str_or_none(parsed.get("what_is_product")),
+                    "product_count":          max(0, int(parsed.get("product_count") or 0)),
+                    "is_sale_post":           bool(parsed.get("is_sale_post", False)),
+                    "what_is_promotion":      _to_str_or_none(parsed.get("what_is_promotion")),
+                }
+
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    wait = 2 ** attempt * 5  # 5s, 10s, 20s, 40s
+                    logger.warning(f"[LLM] 429 rate limit, retry sau {wait}s (attempt {attempt+1}/4)")
+                    await asyncio.sleep(wait)
+                    continue
+                logger.error(f"[LLM] extract_post thất bại: {e}")
                 return {**_EMPTY_RESULT}
 
-            raw = data["choices"][0]["message"]["content"].strip()
-            logger.info(f"[LLM] Qwen trả về: {raw[:300]}")
-
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-                raw = raw.strip()
-
-            parsed = json.loads(raw)
-            return {
-                "extracted_product_name": _to_str_or_none(parsed.get("extracted_product_name")),
-                "price":                  _to_int_or_none(parsed.get("price")),
-                "what_is_product":        _to_str_or_none(parsed.get("what_is_product")),
-                "product_count":          max(0, int(parsed.get("product_count") or 0)),
-                "is_sale_post":           bool(parsed.get("is_sale_post", False)),
-                "what_is_promotion":      _to_str_or_none(parsed.get("what_is_promotion")),
-            }
-
-        except Exception as e:
-            logger.error(f"[LLM] extract_post thất bại: {e}")
-            return {**_EMPTY_RESULT}
+        logger.error("[LLM] Hết retry, bỏ qua post này")
+        return {**_EMPTY_RESULT}
 
     async def extract_posts_batch(self, posts: list[dict]) -> list[dict]:
-        sem = asyncio.Semaphore(3)
-
-        async def _safe(post: dict) -> dict:
-            async with sem:
-                return await self.extract_post(
-                    post_text=post.get("text", ""),
-                    image_urls=post.get("image_urls", []),
-                )
-
-        return await asyncio.gather(*[_safe(p) for p in posts])
+        results = []
+        for post in posts:
+            result = await self.extract_post(post_text=post.get("text", ""))
+            results.append(result)
+        return results
 
 
 def _to_str_or_none(val) -> Optional[str]:
     if val is None:
         return None
     s = str(val).strip()
-    return s if s else None
+    return None if not s or s.lower() == "null" else s
 
 
 def _to_int_or_none(val) -> Optional[int]:

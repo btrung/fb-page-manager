@@ -11,9 +11,6 @@ pydantic-settings==2.1.0
 # Google Gemini — text embeddings
 google-genai>=0.7.0
 
-# EasyOCR — extract text từ ảnh (free, chạy CPU)
-easyocr==1.7.2
-
 # Xử lý ảnh trong RAM (BytesIO, resize)
 Pillow==10.2.0
 

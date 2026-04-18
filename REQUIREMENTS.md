@@ -38,7 +38,7 @@ Hệ thống phải:
 1. Thu thập thông tin từ các trang Facebook (qua Graph API hoặc API giả lập)
 2. Lấy Graph 500 bài posts, sẽ có điều kiện lọc để lưu trữ dữ liệu bài đăng vào PostgreSQL
 
-3. Đưa text/ảnh vào llm để lấy trường cần thiết (
+3. Đưa text vào llm để lấy trường cần thiết (
 extracted_product_name string,
 price int,
 what_is_product string,
@@ -56,19 +56,16 @@ what_is_promotion string)
 
 
 
-4. embedding cho ảnh, để khách hàng truy vấn AI sẽ tìm cho dễ
-Tư duy đúng: Ảnh chỉ tồn tại trong RAM vài giây → OCR → text → embed → xoá
+4. embedding cho ảnh (chỉ với posts pass LLM), để khách hàng truy vấn AI sẽ tìm cho dễ
+Tư duy đúng: Ảnh chỉ tồn tại trong RAM vài giây → embed → xoá
 Không lưu file, không lưu ổ cứng, không lưu DB ảnh.
-Chỉ lưu vector + text.
+Chỉ lưu vector.
 
-đề xuất hướng:
+Hướng thực hiện:
 Download ảnh qua stream → RAM (BytesIO)
 Resize (256–512px) ngay trong RAM
-OCR / Vision model → text lý thanh lọc
-Ghép text này vào nội dung post
 Tạo embedding hình ảnh (CLIP hoặc mô hình tương tự tiết kiệm)
-Push vào vector DB  (ưu tiên Qdrant hoặc mô hình tương tự tiết kiệm)
-
+Push vào vector DB (Qdrant)
 Xoá khỏi RAM
 -> lưu trữ vào các db cần các trường image_embedding
 
@@ -233,7 +230,7 @@ AI service là Python backend
 
 ## Giai đoạn 1: Thu thập dữ liệu
 - lấy bài đăng từ API của Facebook
-- Đưa text/ảnh vào llm để lấy trường cần thiết
+- Đưa text vào llm để lấy trường cần thiết
 
 ## Giai đoạn 2: Lọc
 - có điều kiện lọc skip những post không cần thiết
