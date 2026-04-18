@@ -13,7 +13,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { createJob, getJob, runBackground } = require('../queues/jobManager');
+const { createJob, getJob, runBackground, subscribeJob, unsubscribeJob } = require('../queues/jobManager');
 const { processCrawlJob } = require('../workers/crawlWorker');
 const {
   getProductsByUser,
@@ -68,7 +68,7 @@ router.post('/crawl', async (req, res, next) => {
 
 // =============================================
 // GET /api/intelligence/status/:jobId
-// Polling trạng thái — dùng cho progress bar frontend
+// Polling trạng thái — giữ lại cho backwards compat
 // =============================================
 router.get('/status/:jobId', async (req, res, next) => {
   try {
@@ -78,6 +78,49 @@ router.get('/status/:jobId', async (req, res, next) => {
   } catch (err) {
     next({ status: 500, message: err.message });
   }
+});
+
+// =============================================
+// GET /api/intelligence/status/:jobId/stream
+// SSE — push trạng thái job real-time, không polling
+// =============================================
+router.get('/status/:jobId/stream', (req, res) => {
+  const { jobId } = req.params;
+  const job = getJob(jobId);
+  if (!job) {
+    res.status(404).json({ error: 'Không tìm thấy job' });
+    return;
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+  // Gửi trạng thái hiện tại ngay lập tức
+  send({ found: true, ...job });
+
+  // Nếu job đã xong thì đóng luôn
+  if (job.state === 'completed' || job.state === 'failed') {
+    res.end();
+    return;
+  }
+
+  // Subscribe nhận update
+  const onUpdate = (updated) => {
+    send({ found: true, ...updated });
+    if (updated.state === 'completed' || updated.state === 'failed') {
+      unsubscribeJob(jobId, onUpdate);
+      res.end();
+    }
+  };
+
+  subscribeJob(jobId, onUpdate);
+
+  // Client ngắt kết nối → dọn dẹp
+  req.on('close', () => unsubscribeJob(jobId, onUpdate));
 });
 
 // =============================================

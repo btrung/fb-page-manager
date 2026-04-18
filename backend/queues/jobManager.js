@@ -8,6 +8,9 @@ const { v4: uuidv4 } = require('uuid');
 // Lưu trạng thái jobs trong RAM (mất khi restart, OK cho MVP)
 const _jobs = new Map();
 
+// SSE listeners: jobId → Set of callback functions
+const _listeners = new Map();
+
 // Giữ tối đa 100 jobs gần nhất để tránh memory leak
 const MAX_JOBS = 100;
 
@@ -36,7 +39,21 @@ const createJob = (data) => {
 
 const updateJob = (jobId, updates) => {
   const job = _jobs.get(jobId);
-  if (job) _jobs.set(jobId, { ...job, ...updates });
+  if (!job) return;
+  const updated = { ...job, ...updates };
+  _jobs.set(jobId, updated);
+  // Notify SSE listeners
+  const listeners = _listeners.get(jobId);
+  if (listeners) listeners.forEach((cb) => cb(updated));
+};
+
+const subscribeJob = (jobId, callback) => {
+  if (!_listeners.has(jobId)) _listeners.set(jobId, new Set());
+  _listeners.get(jobId).add(callback);
+};
+
+const unsubscribeJob = (jobId, callback) => {
+  _listeners.get(jobId)?.delete(callback);
 };
 
 const getJob = (jobId) => _jobs.get(jobId) || null;
@@ -76,4 +93,4 @@ const runBackground = (jobId, processFn) => {
   });
 };
 
-module.exports = { createJob, updateJob, getJob, runBackground };
+module.exports = { createJob, updateJob, getJob, runBackground, subscribeJob, unsubscribeJob };

@@ -41,28 +41,30 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
   const [crawling, setCrawling] = useState(false);
   const [error, setError]       = useState('');
   const [deleting, setDeleting] = useState(false);
-  const pollRef = useRef(null);
+  const sseRef = useRef(null);
 
-  // Dừng polling khi unmount
-  useEffect(() => () => clearInterval(pollRef.current), []);
+  // Đóng SSE khi unmount
+  useEffect(() => () => sseRef.current?.close(), []);
 
-  const startPolling = useCallback((id) => {
-    clearInterval(pollRef.current);
-    pollRef.current = setInterval(async () => {
-      try {
-        const res = await intelligenceApi.getJobStatus(id);
-        setJobStatus(res.data);
+  const startSSE = useCallback((id) => {
+    sseRef.current?.close();
+    const es = new EventSource(`/api/intelligence/status/${id}/stream`, { withCredentials: true });
+    sseRef.current = es;
 
-        if (res.data.state === 'completed' || res.data.state === 'failed') {
-          clearInterval(pollRef.current);
-          setCrawling(false);
-          if (res.data.state === 'completed') onCrawlComplete?.();
-        }
-      } catch {
-        clearInterval(pollRef.current);
+    es.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      setJobStatus(data);
+      if (data.state === 'completed' || data.state === 'failed') {
+        es.close();
         setCrawling(false);
+        if (data.state === 'completed') onCrawlComplete?.();
       }
-    }, 2000); // Poll mỗi 2 giây
+    };
+
+    es.onerror = () => {
+      es.close();
+      setCrawling(false);
+    };
   }, [onCrawlComplete]);
 
   const handleDelete = async () => {
@@ -95,7 +97,7 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
         return;
       }
 
-      startPolling(id);
+      startSSE(id);
     } catch (err) {
       setError(err.response?.data?.error || 'Lỗi khi trigger crawl');
       setCrawling(false);
