@@ -236,7 +236,7 @@ const IntelligencePage = () => {
         const r = await intelligenceApi.getProducts({ search });
         setProducts(r.data.products || []);
       } else if (activeTab === TABS.POSTS) {
-        const r = await intelligenceApi.getPosts({ pageId, saleOnly: true });
+        const r = await intelligenceApi.getPosts({ pageId, saleOnly: false });
         setPosts(r.data.posts || []);
       } else if (activeTab === TABS.LOGS) {
         const r = await intelligenceApi.getLogs(pageId);

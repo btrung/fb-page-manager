@@ -1,6 +1,6 @@
 """
 LLM Service — trích xuất thông tin sản phẩm từ Facebook posts
-Flow: text post → Gemini 1.5 Flash → JSON kết quả
+Flow: text post → Groq (Llama 3.3 70B) → JSON kết quả
 Ảnh KHÔNG gửi vào LLM — chỉ dùng để embedding ở bước sau
 """
 import asyncio
@@ -8,14 +8,11 @@ import json
 import logging
 from typing import Optional
 
-from google import genai
-from google.genai import types
+import aiohttp
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
-
-_client = genai.Client(api_key=settings.gemini_api_key)
 
 _EMPTY_RESULT = {
     "extracted_product_name": None,
@@ -46,9 +43,11 @@ Quy tắc:
 - product_count: đếm số LOẠI sản phẩm khác nhau
 - Chỉ trả về JSON thuần túy, không markdown, không giải thích"""
 
-# Gemini 2.0 Flash free tier: 10 RPM = 1 req/6s → xử lý tuần tự
+_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+# Groq free: 30 RPM → 1 request/2s → delay 2.5s là an toàn
 _SEM = asyncio.Semaphore(1)
-_MIN_INTERVAL = 7.0  # giây giữa mỗi request
+_MIN_INTERVAL = 2.5
 _last_call_time = 0.0
 
 
@@ -58,33 +57,52 @@ class LLMService:
         if not post_text or not post_text.strip():
             return {**_EMPTY_RESULT}
 
-        prompt = f"{_SYSTEM_PROMPT}\n\nNội dung bài đăng:\n{post_text[:4000]}"
+        payload = {
+            "model": settings.groq_model,
+            "messages": [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": f"Nội dung bài đăng:\n{post_text[:4000]}"},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 300,
+        }
 
-        for attempt in range(4):
+        headers = {
+            "Authorization": f"Bearer {settings.groq_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        for attempt in range(2):  # 1 retry
             try:
                 async with _SEM:
                     global _last_call_time
-                    now = asyncio.get_event_loop().time()
+                    loop = asyncio.get_event_loop()
+                    now = loop.time()
                     wait = _MIN_INTERVAL - (now - _last_call_time)
                     if wait > 0:
                         await asyncio.sleep(wait)
-                    _last_call_time = asyncio.get_event_loop().time()
+                    _last_call_time = loop.time()
 
-                    loop = asyncio.get_event_loop()
-                    response = await loop.run_in_executor(
-                        None,
-                        lambda: _client.models.generate_content(
-                            model=settings.llm_model,
-                            contents=prompt,
-                            config=types.GenerateContentConfig(
-                                temperature=0.1,
-                                max_output_tokens=300,
-                            ),
-                        ),
-                    )
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            _GROQ_URL,
+                            json=payload,
+                            headers=headers,
+                            timeout=aiohttp.ClientTimeout(total=30),
+                        ) as resp:
+                            if resp.status == 429:
+                                wait = 5 * (attempt + 1)
+                                logger.warning(f"[LLM] 429 rate limit, retry sau {wait}s (attempt {attempt+1}/2)")
+                                await asyncio.sleep(wait)
+                                continue
+                            if resp.status != 200:
+                                text = await resp.text()
+                                logger.error(f"[LLM] Groq lỗi {resp.status}: {text[:200]}")
+                                return {**_EMPTY_RESULT}
+                            data = await resp.json()
 
-                raw = response.text.strip()
-                logger.info(f"[LLM] Gemini trả về: {raw[:300]}")
+                raw = data["choices"][0]["message"]["content"].strip()
+                logger.info(f"[LLM] Groq trả về: {raw[:300]}")
 
                 if raw.startswith("```"):
                     raw = raw.split("```")[1]
@@ -103,12 +121,6 @@ class LLMService:
                 }
 
             except Exception as e:
-                err_str = str(e)
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    wait = 2 ** attempt * 5  # 5s, 10s, 20s, 40s
-                    logger.warning(f"[LLM] 429 rate limit, retry sau {wait}s (attempt {attempt+1}/4)")
-                    await asyncio.sleep(wait)
-                    continue
                 logger.error(f"[LLM] extract_post thất bại: {e}")
                 return {**_EMPTY_RESULT}
 

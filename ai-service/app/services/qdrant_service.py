@@ -23,8 +23,8 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Kích thước vector — tất cả dùng Gemini text-embedding-004 768d
-CLIP_DIM = 768
+# CLIP 512d cho ảnh, Gemini text-embedding-004 768d cho text
+CLIP_DIM = 512
 TEXT_DIM = 768
 
 

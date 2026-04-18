@@ -50,7 +50,7 @@ const addEmbeddingJob = async ({ mediaId, postId, pageId, userId, imageUrl, prod
   const job = await queue.add(
     'embed-image',
     { mediaId, postId, pageId, userId, imageUrl, productId, productName },
-    { jobId: `embed:${mediaId}` },
+    { jobId: `embed_${mediaId}` },
   );
 
   return job.id;
@@ -78,7 +78,7 @@ const addEmbeddingJobsBulk = async (items) => {
     },
     opts: {
       ...EMBEDDING_JOB_OPTIONS,
-      jobId: `embed:${item.mediaId}`,
+      jobId: `embed_${item.mediaId}`,
     },
   }));
 

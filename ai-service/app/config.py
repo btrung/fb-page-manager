@@ -7,8 +7,9 @@ class Settings(BaseSettings):
     vision_model: str = "gemini-2.0-flash"
     embedding_model: str = "text-embedding-004"
 
-    # Gemini — dùng cho cả LLM extraction lẫn embeddings
-    llm_model: str = "gemini-2.0-flash"
+    # Groq — dùng cho LLM extraction (text only)
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.3-70b-versatile"
     # Dimension của Gemini text embedding (khác OpenAI 1536d)
     embedding_dim: int = 768
 
