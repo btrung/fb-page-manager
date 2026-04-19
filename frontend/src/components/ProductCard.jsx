@@ -7,7 +7,18 @@ const ProductCard = ({ product }) => {
   };
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow">
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
+      {/* Ảnh đại diện */}
+      {product.imageUrl && (
+        <img
+          src={product.imageUrl}
+          alt={product.productName}
+          className="w-full h-36 object-cover"
+          onError={(e) => { e.target.style.display = 'none'; }}
+        />
+      )}
+
+      <div className="p-4">
       {/* Tên sản phẩm + mention count */}
       <div className="flex items-start justify-between gap-2 mb-2">
         <h3 className="font-semibold text-gray-900 text-sm leading-snug flex-1">
@@ -43,6 +54,7 @@ const ProductCard = ({ product }) => {
       <div className="flex items-center justify-between text-xs text-gray-400 mt-2 pt-2 border-t border-gray-100">
         <span>Lần đầu: {new Date(product.firstSeenAt).toLocaleDateString('vi-VN')}</span>
         <span>Gần nhất: {new Date(product.lastSeenAt).toLocaleDateString('vi-VN')}</span>
+      </div>
       </div>
     </div>
   );
