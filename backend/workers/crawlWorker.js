@@ -285,6 +285,7 @@ const processCrawlJob = async (job) => {
             firstPageId: pageId,
             price: llm.price || null,
             postCreatedTime: post.created_time || null,
+            imageUrl: post._imageUrls[0] || null,
           });
 
           if (productResult) {

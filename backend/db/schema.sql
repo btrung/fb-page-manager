@@ -118,6 +118,8 @@ CREATE TABLE IF NOT EXISTS product_from_posts (
   first_page_id    VARCHAR(255),
   -- Số lần xuất hiện trong các bài đăng
   mention_count    INTEGER       DEFAULT 1,
+  -- Ảnh đại diện sản phẩm (ảnh đầu tiên từ post phát hiện)
+  image_url        TEXT,
   -- Giá hiện tại (cập nhật theo post mới nhất có giá)
   current_price    INTEGER,
   status           VARCHAR(20)   DEFAULT 'active',
@@ -240,3 +242,9 @@ CREATE TABLE IF NOT EXISTS page_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_page_tokens_user
   ON page_tokens (user_id);
+
+
+-- =============================================
+-- ALTER: thêm cột mới cho DB đã tồn tại (idempotent)
+-- =============================================
+ALTER TABLE product_from_posts ADD COLUMN IF NOT EXISTS image_url TEXT;

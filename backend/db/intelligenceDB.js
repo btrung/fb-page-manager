@@ -171,7 +171,7 @@ const normalizeProductName = (name) => {
  */
 const upsertProduct = async ({
   userId, productName, whatIsProduct, whatIsPromotion,
-  firstPostId, firstPageId, price, postCreatedTime,
+  firstPostId, firstPageId, price, postCreatedTime, imageUrl,
 }) => {
   const normalized = normalizeProductName(productName);
   if (!normalized) return null;
@@ -181,18 +181,18 @@ const upsertProduct = async ({
        user_id, product_name, normalized_name,
        what_is_product, what_is_promotion,
        first_post_id, first_page_id,
-       mention_count, current_price,
+       mention_count, current_price, image_url,
        first_seen_at, last_seen_at
      ) VALUES (
        $1, $2, $3, $4, $5, $6, $7,
-       1, $8, $9, $9
+       1, $8, $10, $9, $9
      )
      ON CONFLICT (user_id, normalized_name) DO UPDATE SET
        mention_count    = product_from_posts.mention_count + 1,
        last_seen_at     = NOW(),
        what_is_product  = COALESCE(EXCLUDED.what_is_product, product_from_posts.what_is_product),
        what_is_promotion = COALESCE(EXCLUDED.what_is_promotion, product_from_posts.what_is_promotion),
-       -- Chỉ update price nếu post mới hơn post đã biết và có giá
+       image_url        = COALESCE(product_from_posts.image_url, EXCLUDED.image_url),
        current_price    = CASE
          WHEN $8 IS NOT NULL
            AND $9 IS NOT NULL
@@ -205,7 +205,7 @@ const upsertProduct = async ({
       userId, productName, normalized,
       whatIsProduct, whatIsPromotion,
       firstPostId, firstPageId,
-      price, postCreatedTime,
+      price, postCreatedTime, imageUrl || null,
     ],
   );
 
@@ -233,6 +233,7 @@ const getProductsByUser = async (userId, { limit = 50, offset = 0, search = '' }
        current_price AS "currentPrice",
        mention_count AS "mentionCount",
        first_page_id AS "firstPageId",
+       image_url AS "imageUrl",
        status,
        first_seen_at AS "firstSeenAt",
        last_seen_at AS "lastSeenAt"

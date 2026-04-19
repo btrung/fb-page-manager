@@ -142,11 +142,13 @@ user_id
 product_name
 normalized_name
 what_is_product
+what_is_promotion
 name_confidence
 first_post_id
 first_page_id
 mention_count
 current_price
+image_url (ảnh đại diện sản phẩm — lấy từ ảnh đầu tiên của post phát hiện SP; không ghi đè nếu đã có)
 status
 first_seen_at
 last_seen_at
