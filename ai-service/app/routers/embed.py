@@ -229,6 +229,17 @@ async def embed_post_text(req: EmbedPostTextRequest):
 
 
 # =============================================
+# DELETE /embed/user/{user_id} — xoá toàn bộ vectors của user
+# =============================================
+
+@router.delete("/user/{user_id}")
+async def delete_user_vectors(user_id: str):
+    """Xoá toàn bộ vectors (ảnh + text) của user trong Qdrant."""
+    result = await qdrant_service.delete_by_user_id(user_id)
+    return {"user_id": user_id, "deleted": result}
+
+
+# =============================================
 # GET /embed/health
 # =============================================
 

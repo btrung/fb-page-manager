@@ -287,9 +287,22 @@ router.get('/debug/db', async (req, res, next) => {
 // =============================================
 router.delete('/data', async (req, res, next) => {
   const { id: userId } = req.session.user;
+  const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
   try {
-    const result = await deleteUserData(userId);
-    res.json({ message: 'Đã xóa toàn bộ dữ liệu', deleted: result });
+    // Xoá PostgreSQL
+    const dbResult = await deleteUserData(userId);
+
+    // Xoá Qdrant vectors (best-effort, không fail toàn bộ nếu AI service down)
+    let qdrantResult = null;
+    try {
+      const axios = require('axios');
+      const r = await axios.delete(`${AI_SERVICE_URL}/embed/user/${userId}`, { timeout: 10000 });
+      qdrantResult = r.data.deleted;
+    } catch (err) {
+      console.warn(`[DELETE] Xoá Qdrant thất bại (bỏ qua): ${err.message}`);
+    }
+
+    res.json({ message: 'Đã xóa toàn bộ dữ liệu', deleted: dbResult, qdrant: qdrantResult });
   } catch (err) {
     next({ status: 500, message: err.message });
   }

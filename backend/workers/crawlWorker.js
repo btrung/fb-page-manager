@@ -275,6 +275,7 @@ const processCrawlJob = async (job) => {
         stats.postsSaved++;
 
         // ── Upsert product + liên kết post → product ──
+        let resolvedProductId = null;
         if (llm.extracted_product_name) {
           const productResult = await upsertProduct({
             userId,
@@ -289,10 +290,11 @@ const processCrawlJob = async (job) => {
           });
 
           if (productResult) {
+            resolvedProductId = productResult.productId;
             await linkPostToProduct({
               postId: post.id,
               pageId,
-              productId: productResult.productId,
+              productId: resolvedProductId,
               extractedProductName: llm.extracted_product_name,
               confidence: 1.0,
               isPrimary: true,
@@ -306,7 +308,6 @@ const processCrawlJob = async (job) => {
           const savedMedia = await savePostMediaBatch(post.id, pageId, userId, post._imageUrls);
           stats.mediaProcessed += savedMedia.length;
 
-          // Chuẩn bị embedding jobs cho ảnh mới
           for (const { mediaId, imageUrl } of savedMedia) {
             embeddingJobs.push({
               mediaId,
@@ -314,7 +315,7 @@ const processCrawlJob = async (job) => {
               pageId,
               userId,
               imageUrl,
-              productId: null,    // worker sẽ lookup sau
+              productId: resolvedProductId,
               productName: llm.extracted_product_name || null,
             });
           }

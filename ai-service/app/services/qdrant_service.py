@@ -229,6 +229,26 @@ class QdrantService:
             logger.error(f"[QDRANT] search_similar_posts thất bại: {e}")
             return []
 
+    async def delete_by_user_id(self, user_id: str) -> dict:
+        """Xoá toàn bộ vectors của 1 user trong cả 2 collections."""
+        await self.ensure_collections()
+        user_filter = Filter(
+            must=[FieldCondition(key="user_id", match=MatchValue(value=user_id))]
+        )
+        results = {}
+        for collection in [settings.qdrant_collection_images, settings.qdrant_collection_posts]:
+            try:
+                await self.client.delete(
+                    collection_name=collection,
+                    points_selector=user_filter,
+                )
+                results[collection] = "deleted"
+                logger.info(f"[QDRANT] Xoá vectors user={user_id} trong '{collection}'")
+            except Exception as e:
+                results[collection] = f"error: {e}"
+                logger.error(f"[QDRANT] Xoá thất bại collection={collection}: {e}")
+        return results
+
     async def health_check(self) -> dict:
         """Kiểm tra kết nối và trạng thái collections."""
         try:
