@@ -25,12 +25,73 @@ const ProgressBar = ({ progress, state }) => {
   );
 };
 
+const AI_LEVELS = [
+  { min: 0,   max: 0,   emoji: '🦴', label: 'Người Tối Cổ',        desc: 'AI chưa biết gì về fanpage này', color: 'text-stone-500',  bg: 'bg-stone-50',  border: 'border-stone-200' },
+  { min: 1,   max: 10,  emoji: '🪨', label: 'Người Thời Đồ Đá',    desc: 'AI mới bắt đầu lờ mờ hiểu', color: 'text-amber-700',  bg: 'bg-amber-50',  border: 'border-amber-200' },
+  { min: 11,  max: 30,  emoji: '🧑', label: 'Người Hiện Đại',       desc: 'AI đang học khá tốt rồi', color: 'text-blue-600',   bg: 'bg-blue-50',   border: 'border-blue-200'  },
+  { min: 31,  max: 100, emoji: '🚀', label: 'Người Tương Lai',      desc: 'AI thông minh, hiểu fanpage rõ', color: 'text-purple-600', bg: 'bg-purple-50', border: 'border-purple-200'},
+  { min: 101, max: Infinity, emoji: '👽', label: 'Người Ngoài Hành Tinh', desc: 'AI siêu thông minh, hiểu khách hàng cực tốt', color: 'text-green-600',  bg: 'bg-green-50',  border: 'border-green-200'  },
+];
+
+const getAILevel = (processedPosts) => {
+  return AI_LEVELS.find((l) => processedPosts >= l.min && processedPosts <= l.max) || AI_LEVELS[0];
+};
+
+const AILevelBadge = ({ summary }) => {
+  const count = summary?.processedPosts ?? 0;
+  const [overrideIdx, setOverrideIdx] = useState(null);
+  const [evolving, setEvolving] = useState(false);
+
+  const level = overrideIdx !== null ? AI_LEVELS[overrideIdx] : getAILevel(count);
+
+  const handleEvolve = () => {
+    if (evolving) return;
+    setEvolving(true);
+    setOverrideIdx(0);
+    let i = 0;
+    const tick = () => {
+      i++;
+      if (i < AI_LEVELS.length) {
+        setOverrideIdx(i);
+        setTimeout(tick, 350);
+      } else {
+        setEvolving(false);
+      }
+    };
+    setTimeout(tick, 350);
+  };
+
+  return (
+    <div className={`rounded-xl border ${level.border} ${level.bg} p-4 flex items-center gap-4 transition-all duration-300`}>
+      <span className={`text-4xl transition-all duration-300 ${evolving ? 'scale-125' : 'scale-100'}`}>{level.emoji}</span>
+      <div className="flex-1">
+        <p className={`font-bold text-base ${level.color}`}>{level.label}</p>
+        <p className="text-sm text-gray-500">{level.desc}</p>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="text-right">
+          <p className={`text-2xl font-bold ${level.color}`}>{count}</p>
+          <p className="text-xs text-gray-400">bài đã học</p>
+        </div>
+        <button
+          onClick={handleEvolve}
+          disabled={evolving}
+          title="Hốc Đá cho AI"
+          className="text-xs px-3 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700 disabled:opacity-40 transition-all whitespace-nowrap"
+        >
+          🪨 Hốc Đá
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const CrawlPanel = ({ pageId, onCrawlComplete }) => {
   const [jobId, setJobId]         = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
   const [crawling, setCrawling]   = useState(false);
   const [error, setError]         = useState('');
-  const [deleting, setDeleting]   = useState(false);
+  const [resetting, setResetting] = useState(false);
   const sseRef = useRef(null);
 
   useEffect(() => () => sseRef.current?.close(), []);
@@ -56,21 +117,7 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
     };
   }, [onCrawlComplete]);
 
-  const handleDelete = async () => {
-    if (!window.confirm('Xóa toàn bộ dữ liệu của bạn? Hành động này không thể hoàn tác.')) return;
-    setDeleting(true);
-    setError('');
-    try {
-      await intelligenceApi.deleteAllData();
-      onCrawlComplete?.();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Lỗi khi xóa dữ liệu');
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleCrawl = async () => {
+  const handleLearn = async () => {
     setError('');
     setCrawling(true);
     setJobStatus(null);
@@ -82,49 +129,73 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
       if (res.data.alreadyRunning) {
         setJobStatus({ state: res.data.state, progress: 0 });
         setCrawling(false);
-        setError(`Job đang chạy (${res.data.state}). Chờ hoàn thành.`);
+        setError(`Đang học rồi (${res.data.state}). Chờ hoàn thành nhé.`);
         return;
       }
 
       startSSE(id);
     } catch (err) {
-      setError(err.response?.data?.error || 'Lỗi khi trigger crawl');
+      setError(err.response?.data?.error || 'Lỗi khi bắt đầu học');
       setCrawling(false);
     }
   };
 
-  const stateLabel = {
-    waiting: 'Đang chờ...',
-    active: 'Đang xử lý...',
-    completed: 'Hoàn thành!',
-    failed: 'Thất bại',
+  const handleRelearn = async () => {
+    if (!window.confirm('AI sẽ quên hết và học lại từ đầu. Xác nhận?')) return;
+    setResetting(true);
+    setError('');
+    setJobStatus(null);
+    try {
+      await intelligenceApi.deleteAllData();
+      onCrawlComplete?.();
+      // Tự động crawl lại sau khi xóa
+      const res = await intelligenceApi.triggerCrawl(pageId, 500);
+      const id = res.data.jobId;
+      setJobId(id);
+      setCrawling(true);
+      startSSE(id);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Lỗi khi học lại');
+      setCrawling(false);
+    } finally {
+      setResetting(false);
+    }
   };
+
+  const stateLabel = {
+    waiting: 'Đang chuẩn bị...',
+    active: 'AI đang học...',
+    completed: 'Học xong rồi! 🎉',
+    failed: 'Học thất bại',
+  };
+
+  const busy = crawling || resetting;
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="font-semibold text-gray-900">Crawl & Phân tích Posts</h2>
+          <h2 className="font-semibold text-gray-900">Huấn luyện AI</h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            Thu thập 500 bài đăng, trích xuất thông tin bán hàng bằng AI
+            AI đọc hiểu 500 bài đăng, tự học sản phẩm & khách hàng của fanpage
           </p>
         </div>
         <div className="flex gap-2">
           <button
-            onClick={handleDelete}
-            disabled={deleting || crawling}
-            className="px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+            onClick={handleRelearn}
+            disabled={busy}
+            className="px-4 py-2 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
-            {deleting && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-            {deleting ? 'Đang xóa...' : 'Xóa dữ liệu'}
+            {resetting && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            {resetting ? 'Đang reset...' : '🔄 AI Học Lại'}
           </button>
           <button
-            onClick={handleCrawl}
-            disabled={crawling}
+            onClick={handleLearn}
+            disabled={busy}
             className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
-            {crawling && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-            {crawling ? 'Đang chạy...' : 'Crawl 500 Posts'}
+            {crawling && !resetting && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+            {crawling && !resetting ? 'AI đang học...' : '🧠 AI Học Fanpage'}
           </button>
         </div>
       </div>
@@ -140,9 +211,9 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
           {jobStatus.state === 'completed' && jobStatus.returnvalue && (
             <div className="mt-3 grid grid-cols-3 gap-2 text-center">
               {[
-                { label: 'Đã lưu', value: jobStatus.returnvalue.postsSaved, color: 'text-green-600' },
+                { label: 'Bài mới học', value: jobStatus.returnvalue.postsSaved, color: 'text-green-600' },
                 { label: 'Bỏ qua', value: jobStatus.returnvalue.postsSkipped, color: 'text-gray-500' },
-                { label: 'Ảnh xếp hàng', value: jobStatus.returnvalue.mediaEnqueued, color: 'text-blue-600' },
+                { label: 'Ảnh đang xử lý', value: jobStatus.returnvalue.mediaEnqueued, color: 'text-blue-600' },
               ].map(({ label, value, color }) => (
                 <div key={label} className="bg-gray-50 rounded-lg py-2">
                   <p className={`text-lg font-bold ${color}`}>{value ?? '—'}</p>
@@ -233,8 +304,12 @@ const IntelligencePage = () => {
 
       <main className="max-w-5xl mx-auto px-4 py-8">
         <div className="mb-5">
-          <p className="text-sm text-gray-500">Post Intelligence</p>
+          <p className="text-sm text-gray-500">AI Học Fanpage</p>
           <h1 className="text-2xl font-bold text-gray-900">{pageName || pageId}</h1>
+        </div>
+
+        <div className="mb-5">
+          <AILevelBadge summary={summary} />
         </div>
 
         <SummaryStats summary={summary} />
