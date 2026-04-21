@@ -8,10 +8,7 @@ pydantic-settings==2.1.0
 # =============================================
 # AI / Embeddings
 # =============================================
-# Google Gemini — text embeddings
-google-genai>=0.7.0
-
-# CLIP image embeddings (512d, chạy CPU)
+# sentence-transformers — CLIP (512d) + text multilingual (384d)
 sentence-transformers==3.0.1
 
 # Xử lý ảnh trong RAM (BytesIO, resize)

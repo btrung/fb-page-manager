@@ -10,7 +10,14 @@
       "Bash(pkill -f \"vite\")",
       "Bash(docker compose *)",
       "Bash(cat backend/routes/*.js)",
-      "Bash(cat backend/middleware/*.js)"
+      "Bash(cat backend/middleware/*.js)",
+      "Bash(docker exec *)",
+      "Bash(curl *)",
+      "Bash(docker restart fb-page-manager-ai-service-1 *)",
+      "Bash(docker stats *)",
+      "Bash(docker stop ai-chat-backend-1 *)",
+      "Bash(wmic OS *)",
+      "Bash(docker stop ai-chat-frontend-1 *)"
     ]
   }
 }

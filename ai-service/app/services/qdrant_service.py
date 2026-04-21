@@ -6,6 +6,7 @@ Collections:
   - post_embeddings  : OpenAI 1536d — nội dung bài đăng
 """
 import logging
+import uuid
 from typing import Optional
 
 from qdrant_client import AsyncQdrantClient
@@ -23,9 +24,9 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# CLIP 512d cho ảnh, Gemini text-embedding-004 768d cho text
+# CLIP 512d cho ảnh, MiniLM 384d cho text
 CLIP_DIM = 512
-TEXT_DIM = 768
+TEXT_DIM = 384
 
 
 class QdrantService:
@@ -144,10 +145,11 @@ class QdrantService:
         """
         await self.ensure_collections()
         try:
+            point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, post_id))
             await self.client.upsert(
                 collection_name=settings.qdrant_collection_posts,
                 points=[
-                    PointStruct(id=post_id, vector=vector, payload=payload)
+                    PointStruct(id=point_id, vector=vector, payload={**payload, "post_id": post_id})
                 ],
             )
             return True

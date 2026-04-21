@@ -1,18 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import Navbar from '../components/Navbar';
-import ProductCard from '../components/ProductCard';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { intelligenceApi, pagesApi } from '../utils/api';
 
-// =============================================
-// Tab constants
-// =============================================
-const TABS = { PRODUCTS: 'products', POSTS: 'posts', LOGS: 'logs' };
+const TABS = { POSTS: 'posts', LOGS: 'logs' };
 
-// =============================================
-// Component: Progress Bar
-// =============================================
 const ProgressBar = ({ progress, state }) => {
   const colorMap = {
     active: 'bg-blue-500',
@@ -32,18 +25,14 @@ const ProgressBar = ({ progress, state }) => {
   );
 };
 
-// =============================================
-// Component: CrawlPanel
-// =============================================
 const CrawlPanel = ({ pageId, onCrawlComplete }) => {
-  const [jobId, setJobId]       = useState(null);
+  const [jobId, setJobId]         = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
-  const [crawling, setCrawling] = useState(false);
-  const [error, setError]       = useState('');
-  const [deleting, setDeleting] = useState(false);
+  const [crawling, setCrawling]   = useState(false);
+  const [error, setError]         = useState('');
+  const [deleting, setDeleting]   = useState(false);
   const sseRef = useRef(null);
 
-  // Đóng SSE khi unmount
   useEffect(() => () => sseRef.current?.close(), []);
 
   const startSSE = useCallback((id) => {
@@ -117,7 +106,7 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
         <div>
           <h2 className="font-semibold text-gray-900">Crawl & Phân tích Posts</h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            Thu thập 500 bài đăng, trích xuất sản phẩm bằng AI
+            Thu thập 500 bài đăng, trích xuất thông tin bán hàng bằng AI
           </p>
         </div>
         <div className="flex gap-2">
@@ -127,7 +116,7 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
             className="px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             {deleting && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-            {deleting ? 'Đang xóa...' : '🗑️ Xóa dữ liệu'}
+            {deleting ? 'Đang xóa...' : 'Xóa dữ liệu'}
           </button>
           <button
             onClick={handleCrawl}
@@ -135,12 +124,11 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
             className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             {crawling && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
-            {crawling ? 'Đang chạy...' : '🚀 Crawl 500 Posts'}
+            {crawling ? 'Đang chạy...' : 'Crawl 500 Posts'}
           </button>
         </div>
       </div>
 
-      {/* Progress */}
       {jobStatus && (
         <div className="space-y-2">
           <div className="flex justify-between text-xs text-gray-500">
@@ -165,9 +153,7 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
           )}
 
           {jobStatus.state === 'failed' && (
-            <p className="text-xs text-red-600 mt-1">
-              Lỗi: {jobStatus.failedReason}
-            </p>
+            <p className="text-xs text-red-600 mt-1">Lỗi: {jobStatus.failedReason}</p>
           )}
         </div>
       )}
@@ -177,16 +163,13 @@ const CrawlPanel = ({ pageId, onCrawlComplete }) => {
   );
 };
 
-// =============================================
-// Component: Summary Stats
-// =============================================
 const SummaryStats = ({ summary }) => {
   if (!summary) return null;
   const stats = [
     { label: 'Bài bán hàng', value: summary.salePosts, color: 'text-blue-600' },
     { label: 'Đã xử lý AI', value: summary.processedPosts, color: 'text-purple-600' },
-    { label: 'Sản phẩm', value: summary.totalProducts, color: 'text-green-600' },
     { label: 'Ảnh đã embed', value: summary.embeddedImages, color: 'text-orange-600' },
+    { label: 'Ảnh đang chờ', value: summary.pendingImages, color: 'text-yellow-600' },
   ];
 
   return (
@@ -201,21 +184,15 @@ const SummaryStats = ({ summary }) => {
   );
 };
 
-// =============================================
-// Main Page
-// =============================================
 const IntelligencePage = () => {
   const { pageId } = useParams();
-  const [tab, setTab]           = useState(TABS.PRODUCTS);
-  const [summary, setSummary]   = useState(null);
-  const [products, setProducts] = useState([]);
-  const [posts, setPosts]       = useState([]);
-  const [logs, setLogs]         = useState([]);
-  const [loading, setLoading]   = useState(false);
-  const [search, setSearch]     = useState('');
+  const [tab, setTab]         = useState(TABS.POSTS);
+  const [summary, setSummary] = useState(null);
+  const [posts, setPosts]     = useState([]);
+  const [logs, setLogs]       = useState([]);
+  const [loading, setLoading] = useState(false);
   const [pageName, setPageName] = useState('');
 
-  // Tải summary + tên page khi mount
   useEffect(() => {
     intelligenceApi.getSummary().then((r) => setSummary(r.data)).catch(() => {});
     pagesApi.getPages().then((r) => {
@@ -224,7 +201,6 @@ const IntelligencePage = () => {
     }).catch(() => {});
   }, [pageId]);
 
-  // Load data theo tab
   useEffect(() => {
     loadTabData(tab);
   }, [tab, pageId]);
@@ -232,10 +208,7 @@ const IntelligencePage = () => {
   const loadTabData = async (activeTab) => {
     setLoading(true);
     try {
-      if (activeTab === TABS.PRODUCTS) {
-        const r = await intelligenceApi.getProducts({ search });
-        setProducts(r.data.products || []);
-      } else if (activeTab === TABS.POSTS) {
+      if (activeTab === TABS.POSTS) {
         const r = await intelligenceApi.getPosts({ pageId, saleOnly: false });
         setPosts(r.data.posts || []);
       } else if (activeTab === TABS.LOGS) {
@@ -254,39 +227,26 @@ const IntelligencePage = () => {
     loadTabData(tab);
   };
 
-  const handleSearch = (e) => {
-    if (e.key === 'Enter') {
-      intelligenceApi.getProducts({ search }).then((r) => setProducts(r.data.products || []));
-    }
-  };
-
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
 
       <main className="max-w-5xl mx-auto px-4 py-8">
-        {/* Header */}
         <div className="mb-5">
-          <p className="text-sm text-gray-500">Product Intelligence</p>
-          <h1 className="text-2xl font-bold text-gray-900">
-            {pageName || pageId}
-          </h1>
+          <p className="text-sm text-gray-500">Post Intelligence</p>
+          <h1 className="text-2xl font-bold text-gray-900">{pageName || pageId}</h1>
         </div>
 
-        {/* Summary stats */}
         <SummaryStats summary={summary} />
 
-        {/* Crawl panel */}
         <div className="mb-5">
           <CrawlPanel pageId={pageId} onCrawlComplete={handleCrawlComplete} />
         </div>
 
-        {/* Tabs */}
         <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-5 w-fit">
           {[
-            { key: TABS.PRODUCTS, label: '🛍 Sản phẩm' },
-            { key: TABS.POSTS,    label: '📄 Bài đăng' },
-            { key: TABS.LOGS,     label: '📋 Lịch sử' },
+            { key: TABS.POSTS, label: 'Bài đăng' },
+            { key: TABS.LOGS,  label: 'Lịch sử' },
           ].map(({ key, label }) => (
             <button
               key={key}
@@ -301,44 +261,6 @@ const IntelligencePage = () => {
             </button>
           ))}
         </div>
-
-        {/* Tab: Products */}
-        {tab === TABS.PRODUCTS && (
-          <div>
-            <div className="flex gap-2 mb-4">
-              <input
-                type="text"
-                placeholder="Tìm sản phẩm..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onKeyDown={handleSearch}
-                className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
-              />
-              <button
-                onClick={() => intelligenceApi.getProducts({ search }).then((r) => setProducts(r.data.products || []))}
-                className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700"
-              >
-                Tìm
-              </button>
-            </div>
-
-            {loading ? (
-              <div className="flex justify-center py-12"><LoadingSpinner size="lg" /></div>
-            ) : products.length === 0 ? (
-              <div className="text-center py-16 text-gray-400">
-                <p className="text-4xl mb-3">🛍</p>
-                <p className="font-medium">Chưa có sản phẩm nào</p>
-                <p className="text-sm mt-1">Crawl posts để AI trích xuất sản phẩm</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {products.map((p) => (
-                  <ProductCard key={p.productId} product={p} />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
 
         {/* Tab: Posts */}
         {tab === TABS.POSTS && (
@@ -382,7 +304,7 @@ const IntelligencePage = () => {
                         )}
                         {post.whatIsPromotion && (
                           <span className="bg-orange-50 text-orange-700 px-2 py-0.5 rounded-full">
-                            🎁 {post.whatIsPromotion.slice(0, 40)}
+                            {post.whatIsPromotion.slice(0, 40)}
                           </span>
                         )}
                         <span className="text-gray-400">

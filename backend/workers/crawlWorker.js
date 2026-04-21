@@ -20,8 +20,6 @@ const {
   insertPost,
   getExistingPostIds,
   savePostMediaBatch,
-  upsertProduct,
-  linkPostToProduct,
   createCrawlLog,
   updateCrawlLog,
 } = require('../db/intelligenceDB');
@@ -274,38 +272,33 @@ const processCrawlJob = async (job) => {
 
         stats.postsSaved++;
 
-        // ── Upsert product + liên kết post → product ──
-        let resolvedProductId = null;
-        if (llm.extracted_product_name) {
-          const productResult = await upsertProduct({
-            userId,
-            productName: llm.extracted_product_name,
-            whatIsProduct: llm.what_is_product,
-            whatIsPromotion: llm.what_is_promotion,
-            firstPostId: post.id,
-            firstPageId: pageId,
-            price: llm.price || null,
-            postCreatedTime: post.created_time || null,
-            imageUrl: post._imageUrls[0] || null,
-          });
+        // ── Embed text post (best-effort) ──
+        const postText = [
+          post.message || post.story || '',
+          llm.what_is_product || '',
+          llm.what_is_promotion || '',
+        ].filter(Boolean).join('\n');
 
-          if (productResult) {
-            resolvedProductId = productResult.productId;
-            await linkPostToProduct({
-              postId: post.id,
-              pageId,
-              productId: resolvedProductId,
-              extractedProductName: llm.extracted_product_name,
-              confidence: 1.0,
-              isPrimary: true,
-              productCount: llm.product_count || 1,
-            });
-          }
+        if (postText.trim()) {
+          axios.post(`${AI_SERVICE_URL}/embed/post-text`, {
+            post_id: post.id,
+            text: postText,
+            page_id: pageId,
+            user_id: userId,
+            product_name: llm.extracted_product_name || null,
+            product_id: null,
+            is_sale_post: llm.is_sale_post ?? false,
+            current_price: llm.price || null,
+          }, { timeout: 120000 }).catch((err) => {
+            console.warn(`[CRAWL] Text embed thất bại post ${post.id}: ${err.message}`);
+          });
         }
 
         // ── Lưu ảnh vào post_media (pending embedding) ──
-        if (post._imageUrls.length > 0) {
-          const savedMedia = await savePostMediaBatch(post.id, pageId, userId, post._imageUrls);
+        // Dedup theo path URL — FB CDN trả về cùng ảnh với query params khác nhau
+        const uniqueImageUrls = [...new Map(post._imageUrls.map(u => [u.split('?')[0], u])).values()];
+        if (uniqueImageUrls.length > 0) {
+          const savedMedia = await savePostMediaBatch(post.id, pageId, userId, uniqueImageUrls);
           stats.mediaProcessed += savedMedia.length;
 
           for (const { mediaId, imageUrl } of savedMedia) {
@@ -315,7 +308,6 @@ const processCrawlJob = async (job) => {
               pageId,
               userId,
               imageUrl,
-              productId: resolvedProductId,
               productName: llm.extracted_product_name || null,
             });
           }

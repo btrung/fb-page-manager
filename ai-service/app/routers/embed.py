@@ -67,7 +67,9 @@ class EmbedPostTextRequest(BaseModel):
     page_id: str
     user_id: str
     product_name: Optional[str] = None
+    product_id: Optional[str] = None
     is_sale_post: bool = False
+    current_price: Optional[int] = None
 
 
 class EmbedPostTextResponse(BaseModel):
@@ -100,7 +102,6 @@ async def embed_single_image(req: EmbedImageRequest):
         "page_id": req.page_id,
         "user_id": req.user_id,
         "image_url": req.image_url,
-        "product_id": req.product_id,
         "product_name": req.product_name,
     }
 
@@ -165,7 +166,6 @@ async def embed_images_batch(req: EmbedImagesBatchRequest):
                 "page_id": item.page_id,
                 "user_id": item.user_id,
                 "image_url": item.image_url,
-                "product_id": item.product_id,
                 "product_name": item.product_name,
             },
         })
@@ -217,7 +217,7 @@ async def embed_post_text(req: EmbedPostTextRequest):
             "page_id": req.page_id,
             "user_id": req.user_id,
             "product_name": req.product_name,
-            "is_sale_post": req.is_sale_post,
+            "current_price": req.current_price,
         },
     )
 
@@ -256,5 +256,6 @@ async def embed_health():
         "clip_model_loaded": clip_loaded,
         "clip_model_name": "clip-ViT-B-32",
         "clip_vector_dim": 512,
-        "text_vector_dim": 1536,
+        "text_model": "paraphrase-multilingual-MiniLM-L12-v2",
+        "text_vector_dim": 384,
     }

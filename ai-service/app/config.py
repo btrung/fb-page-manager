@@ -2,16 +2,13 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # Google Gemini — chỉ dùng cho embeddings
-    gemini_api_key: str
-    vision_model: str = "gemini-2.0-flash"
-    embedding_model: str = "text-embedding-004"
+    # paraphrase-multilingual-MiniLM-L12-v2 — text embeddings local (384d, nhẹ, multilingual)
+    embedding_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_dim: int = 384
 
     # Groq — dùng cho LLM extraction (text only)
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
-    # Dimension của Gemini text embedding (khác OpenAI 1536d)
-    embedding_dim: int = 768
 
     # Qdrant — vector database
     # Local: http://localhost:6333  (không cần api_key)
@@ -27,6 +24,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 
 settings = Settings()

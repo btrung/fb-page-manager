@@ -45,9 +45,6 @@ export const intelligenceApi = {
   getSummary: () =>
     api.get('/api/intelligence/summary'),
 
-  getProducts: ({ limit = 50, offset = 0, search = '' } = {}) =>
-    api.get('/api/intelligence/products', { params: { limit, offset, search } }),
-
   getPosts: ({ pageId, saleOnly = false, limit = 50, offset = 0 } = {}) =>
     api.get('/api/intelligence/posts', { params: { pageId, saleOnly, limit, offset } }),
 

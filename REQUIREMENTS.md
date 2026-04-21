@@ -1,4 +1,23 @@
-# FB Page Manager - Product Intelligence Graph Service
+# FB Page Manager - Post Intelligence Service
+
+---
+
+## ⚠️ QUYẾT ĐỊNH KIẾN TRÚC LỚN
+
+### Bỏ Product Layer (product_from_posts)
+
+**Quyết định:** Không còn bảng `product_from_posts`, `post_products`, `product_media_vectors` trong luồng xử lý chính.
+
+**Lý do:** `product_from_posts` chỉ là sản phẩm _dự đoán_ từ bài viết, không phải sản phẩm thực tế. Việc dedup theo tên sản phẩm không đáng tin cậy (cùng tên nhưng khác sản phẩm). Thay vào đó, dùng thẳng `posts` + Qdrant làm nguồn dữ liệu cho mọi truy vấn.
+
+**Hệ quả:**
+- Nguồn dữ liệu duy nhất: bảng `posts` (PostgreSQL) + `post_embeddings` / `product_images` (Qdrant)
+- Không còn route `GET /api/intelligence/products`
+- Không còn tab Sản phẩm trên frontend
+- Qdrant `product_images` vẫn lưu `product_name` từ LLM extraction (không có `product_id`)
+- Các bảng cũ (`product_from_posts`, `post_products`, `product_media_vectors`) giữ nguyên trong DB nhưng không ghi vào nữa
+
+---
 
 ## 📋 CONTEXT HIỆN TẠI
 

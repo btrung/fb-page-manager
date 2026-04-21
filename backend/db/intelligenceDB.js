@@ -141,176 +141,6 @@ const getPendingMedia = async (userId, limit = 100) => {
 };
 
 // =============================================
-// PRODUCT_FROM_POSTS
-// =============================================
-
-/**
- * Normalize tên sản phẩm để so sánh: lowercase + bỏ dấu + trim
- * Ví dụ: "Áo Polo Nam" → "ao polo nam"
- */
-const normalizeProductName = (name) => {
-  if (!name) return '';
-  return name
-    .toLowerCase()
-    .normalize('NFD')                     // tách dấu khỏi ký tự gốc
-    .replace(/[\u0300-\u036f]/g, '')      // xoá dấu
-    .replace(/đ/g, 'd')
-    .replace(/[^a-z0-9\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-};
-
-/**
- * Upsert sản phẩm từ post:
- *  - Nếu chưa có: tạo mới
- *  - Nếu đã có:
- *    + Tăng mention_count
- *    + Update price nếu post mới hơn và có giá
- *    + Update last_seen_at
- * Trả về { productId, isNew }
- */
-const upsertProduct = async ({
-  userId, productName, whatIsProduct, whatIsPromotion,
-  firstPostId, firstPageId, price, postCreatedTime, imageUrl,
-}) => {
-  const normalized = normalizeProductName(productName);
-  if (!normalized) return null;
-
-  const { rows } = await pool.query(
-    `INSERT INTO product_from_posts (
-       user_id, product_name, normalized_name,
-       what_is_product, what_is_promotion,
-       first_post_id, first_page_id,
-       mention_count, current_price, image_url,
-       first_seen_at, last_seen_at
-     ) VALUES (
-       $1, $2, $3, $4, $5, $6, $7,
-       1, $8, $10, $9, $9
-     )
-     ON CONFLICT (user_id, normalized_name) DO UPDATE SET
-       mention_count    = product_from_posts.mention_count + 1,
-       last_seen_at     = NOW(),
-       what_is_product  = COALESCE(EXCLUDED.what_is_product, product_from_posts.what_is_product),
-       what_is_promotion = COALESCE(EXCLUDED.what_is_promotion, product_from_posts.what_is_promotion),
-       image_url        = COALESCE(product_from_posts.image_url, EXCLUDED.image_url),
-       current_price    = CASE
-         WHEN $8 IS NOT NULL
-           AND $9 IS NOT NULL
-           AND (product_from_posts.last_seen_at IS NULL OR $9 > product_from_posts.last_seen_at)
-         THEN $8
-         ELSE product_from_posts.current_price
-       END
-     RETURNING product_id, (xmax = 0) AS is_new`,
-    [
-      userId, productName, normalized,
-      whatIsProduct, whatIsPromotion,
-      firstPostId, firstPageId,
-      price, postCreatedTime, imageUrl || null,
-    ],
-  );
-
-  if (rows.length === 0) return null;
-  return { productId: rows[0].product_id, isNew: rows[0].is_new };
-};
-
-/**
- * Lấy danh sách sản phẩm của 1 user (cho UI)
- */
-const getProductsByUser = async (userId, { limit = 50, offset = 0, search = '' } = {}) => {
-  const searchClause = search
-    ? `AND (p.product_name ILIKE $3 OR p.normalized_name ILIKE $3)`
-    : '';
-  const params = search
-    ? [userId, limit, `%${search}%`, offset]
-    : [userId, limit, offset];
-
-  const { rows } = await pool.query(
-    `SELECT
-       product_id AS "productId",
-       product_name AS "productName",
-       what_is_product AS "whatIsProduct",
-       what_is_promotion AS "whatIsPromotion",
-       current_price AS "currentPrice",
-       mention_count AS "mentionCount",
-       first_page_id AS "firstPageId",
-       image_url AS "imageUrl",
-       status,
-       first_seen_at AS "firstSeenAt",
-       last_seen_at AS "lastSeenAt"
-     FROM product_from_posts p
-     WHERE user_id = $1 ${searchClause}
-     ORDER BY mention_count DESC, last_seen_at DESC
-     LIMIT $2 OFFSET $${search ? 4 : 3}`,
-    params,
-  );
-  return rows;
-};
-
-/**
- * Đếm tổng sản phẩm của user
- */
-const countProductsByUser = async (userId) => {
-  const { rows } = await pool.query(
-    `SELECT COUNT(*)::int AS count FROM product_from_posts WHERE user_id = $1`,
-    [userId],
-  );
-  return rows[0].count;
-};
-
-// =============================================
-// POST_PRODUCTS (quan hệ post ↔ product)
-// =============================================
-
-/**
- * Tạo liên kết post → product
- * ON CONFLICT DO NOTHING — tránh duplicate
- */
-const linkPostToProduct = async ({
-  postId, pageId, productId, extractedProductName,
-  confidence = 1.0, isPrimary = true, productCount = 1,
-}) => {
-  await pool.query(
-    `INSERT INTO post_products
-       (post_id, page_id, product_id, extracted_product_name,
-        confidence, is_primary, product_count)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (post_id, product_id) DO NOTHING`,
-    [postId, pageId, productId, extractedProductName,
-     confidence, isPrimary, productCount],
-  );
-};
-
-// =============================================
-// PRODUCT_MEDIA_VECTORS
-// =============================================
-
-/**
- * Lưu vector ảnh sản phẩm vào product_media_vectors
- * Dùng sau khi embedding worker xử lý xong
- */
-const saveProductMediaVector = async ({
-  productId, productName, postId, pageId,
-  imageUrl, imageEmbedding, isPrimary = false, similarityScore = null,
-}) => {
-  await pool.query(
-    `INSERT INTO product_media_vectors
-       (product_id, product_name, post_id, page_id, image_url,
-        image_embedding, similarity_score, is_primary)
-     VALUES ($1, $2, $3, $4, $5, $6::vector, $7, $8)
-     ON CONFLICT (product_id, image_url) DO UPDATE SET
-       image_embedding  = EXCLUDED.image_embedding,
-       similarity_score = EXCLUDED.similarity_score,
-       is_primary       = EXCLUDED.is_primary`,
-    [
-      productId, productName, postId, pageId,
-      imageUrl,
-      imageEmbedding ? JSON.stringify(imageEmbedding) : null,
-      similarityScore, isPrimary,
-    ],
-  );
-};
-
-// =============================================
 // CRAWL_LOGS
 // =============================================
 
@@ -397,8 +227,6 @@ const getIntelligenceSummary = async (userId) => {
         WHERE user_id = $1 AND is_sale_post = TRUE)           AS "salePosts",
        (SELECT COUNT(*)::int FROM posts
         WHERE user_id = $1 AND llm_processed = TRUE)          AS "processedPosts",
-       (SELECT COUNT(*)::int FROM product_from_posts
-        WHERE user_id = $1)                                    AS "totalProducts",
        (SELECT COUNT(*)::int FROM post_media pm
         JOIN posts p ON p.id = pm.post_id
         WHERE p.user_id = $1 AND pm.embedding_status = 'done') AS "embeddedImages",
@@ -419,15 +247,6 @@ module.exports = {
   savePostMediaBatch,
   updateMediaEmbeddingStatus,
   getPendingMedia,
-  // Products
-  upsertProduct,
-  getProductsByUser,
-  countProductsByUser,
-  normalizeProductName,
-  // Post-product links
-  linkPostToProduct,
-  // Product media vectors
-  saveProductMediaVector,
   // Crawl logs
   createCrawlLog,
   updateCrawlLog,
@@ -445,20 +264,14 @@ async function deleteUserData(userId) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const r1 = await client.query(`DELETE FROM product_media_vectors WHERE page_id IN (SELECT DISTINCT page_id FROM posts WHERE user_id = $1)`, [userId]);
-    const r2 = await client.query(`DELETE FROM post_products WHERE post_id IN (SELECT id FROM posts WHERE user_id = $1)`, [userId]);
-    const r3 = await client.query(`DELETE FROM product_from_posts  WHERE user_id = $1`, [userId]);
-    const r4 = await client.query(`DELETE FROM post_media          WHERE user_id = $1`, [userId]);
-    const r5 = await client.query(`DELETE FROM crawl_logs          WHERE user_id = $1`, [userId]);
-    const r6 = await client.query(`DELETE FROM posts               WHERE user_id = $1`, [userId]);
+    const r1 = await client.query(`DELETE FROM post_media  WHERE user_id = $1`, [userId]);
+    const r2 = await client.query(`DELETE FROM crawl_logs  WHERE user_id = $1`, [userId]);
+    const r3 = await client.query(`DELETE FROM posts       WHERE user_id = $1`, [userId]);
     await client.query('COMMIT');
     return {
-      product_media_vectors: r1.rowCount,
-      post_products: r2.rowCount,
-      product_from_posts: r3.rowCount,
-      post_media: r4.rowCount,
-      crawl_logs: r5.rowCount,
-      posts: r6.rowCount,
+      post_media: r1.rowCount,
+      crawl_logs: r2.rowCount,
+      posts: r3.rowCount,
     };
   } catch (err) {
     await client.query('ROLLBACK');

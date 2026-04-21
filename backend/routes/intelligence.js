@@ -1,9 +1,8 @@
 /**
- * Intelligence Routes — API cho Product Intelligence Graph
+ * Intelligence Routes — API cho Post Intelligence
  *
  * POST /api/intelligence/crawl            — kích hoạt crawl 500 posts
  * GET  /api/intelligence/status/:jobId    — polling trạng thái job
- * GET  /api/intelligence/products         — danh sách sản phẩm đã extract
  * GET  /api/intelligence/posts            — posts đã xử lý LLM
  * GET  /api/intelligence/logs             — lịch sử crawl
  * GET  /api/intelligence/summary          — tổng quan dashboard
@@ -16,8 +15,6 @@ const router = express.Router();
 const { createJob, getJob, runBackground, subscribeJob, unsubscribeJob } = require('../queues/jobManager');
 const { processCrawlJob } = require('../workers/crawlWorker');
 const {
-  getProductsByUser,
-  countProductsByUser,
   getExistingPostIds,
   getCrawlLogs,
   getIntelligenceSummary,
@@ -38,9 +35,25 @@ router.post('/crawl', async (req, res, next) => {
     return res.status(400).json({ error: 'pageId là bắt buộc' });
   }
 
-  // Lấy page access token đã lưu trong session khi user vào trang /pages
+  // Lấy page access token từ session, fallback sang DB
   const pageTokens = req.session.pageTokens || {};
-  const pageAccessToken = pageTokens[pageId];
+  let pageAccessToken = pageTokens[pageId];
+
+  if (!pageAccessToken) {
+    try {
+      const row = await pool.query(
+        'SELECT page_access_token FROM page_tokens WHERE page_id = $1',
+        [pageId],
+      );
+      if (row.rows.length > 0) {
+        pageAccessToken = row.rows[0].page_access_token;
+        // Cập nhật lại session
+        req.session.pageTokens = { ...pageTokens, [pageId]: pageAccessToken };
+      }
+    } catch (e) {
+      console.error('[CRAWL] Lấy token từ DB thất bại:', e.message);
+    }
+  }
 
   if (!pageAccessToken) {
     return res.status(403).json({
@@ -121,34 +134,6 @@ router.get('/status/:jobId/stream', (req, res) => {
 
   // Client ngắt kết nối → dọn dẹp
   req.on('close', () => unsubscribeJob(jobId, onUpdate));
-});
-
-// =============================================
-// GET /api/intelligence/products
-// Danh sách sản phẩm đã extract từ posts
-// Query: ?limit=50&offset=0&search=áo
-// =============================================
-router.get('/products', async (req, res, next) => {
-  const { id: userId } = req.session.user;
-  const limit  = Math.min(parseInt(req.query.limit)  || 50, 200);
-  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
-  const search = req.query.search?.trim() || '';
-
-  try {
-    const [products, total] = await Promise.all([
-      getProductsByUser(userId, { limit, offset, search }),
-      countProductsByUser(userId),
-    ]);
-
-    res.json({
-      total,
-      limit,
-      offset,
-      products,
-    });
-  } catch (err) {
-    next({ status: 500, message: err.message });
-  }
 });
 
 // =============================================

@@ -1,66 +1,52 @@
 """
-Embedding Service — Google Gemini text-embedding-004
-Output: 768 dimensions
+Embedding Service — paraphrase-multilingual-MiniLM-L12-v2
+Local, 384d, multilingual (tiếng Việt tốt), ~200MB RAM
 """
 import asyncio
 import logging
 from typing import Optional
 
-from google import genai
-from google.genai.types import EmbedContentConfig
+from sentence_transformers import SentenceTransformer
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_client = genai.Client(api_key=settings.gemini_api_key)
-_EMBED_SEMAPHORE = asyncio.Semaphore(5)
+_model: Optional[SentenceTransformer] = None
+_model_lock = asyncio.Lock()
+
+
+async def get_model() -> SentenceTransformer:
+    global _model
+    if _model is None:
+        async with _model_lock:
+            if _model is None:
+                loop = asyncio.get_event_loop()
+                _model = await loop.run_in_executor(
+                    None,
+                    lambda: SentenceTransformer(settings.embedding_model, device="cpu"),
+                )
+                logger.info(f"[EMBED] Text model loaded: {settings.embedding_model} ({settings.embedding_dim}d)")
+    return _model
 
 
 class EmbeddingService:
     def __init__(self):
-        self.model = settings.embedding_model  # "text-embedding-004"
-        self.dim   = settings.embedding_dim    # 768
-
-    def _build_post_text(self, post: dict) -> str:
-        parts = []
-        if post.get("message"):
-            parts.append(post["message"])
-        if post.get("created_time"):
-            parts.append(f"Ngày đăng: {post['created_time']}")
-        return "\n".join(parts) if parts else "(Bài đăng không có nội dung text)"
+        self.dim = settings.embedding_dim  # 384
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        async def _embed_one(text: str) -> list[float]:
-            async with _EMBED_SEMAPHORE:
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    None,
-                    lambda: _client.models.embed_content(
-                        model=self.model,
-                        contents=text[:8000],
-                        config=EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
-                    )
-                )
-                return result.embeddings[0].values
+        model = await get_model()
+        loop = asyncio.get_event_loop()
 
-        return await asyncio.gather(*[_embed_one(t) for t in texts])
+        def _encode():
+            vecs = model.encode(texts, batch_size=32, show_progress_bar=False)
+            return vecs.tolist()
 
-    async def embed_posts(self, posts: list[dict]) -> list[list[float]]:
-        texts = [self._build_post_text(p) for p in posts]
-        return await self.embed_texts(texts)
+        return await loop.run_in_executor(None, _encode)
 
     async def embed_query(self, query: str) -> list[float]:
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: _client.models.embed_content(
-                model=self.model,
-                contents=query[:8000],
-                config=EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
-            )
-        )
-        return result.embeddings[0].values
+        vectors = await self.embed_texts([query])
+        return vectors[0]
 
 
 embedding_service = EmbeddingService()

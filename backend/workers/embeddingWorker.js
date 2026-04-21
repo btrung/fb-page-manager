@@ -16,8 +16,6 @@ const { Worker } = require('bullmq');
 const { getRedisConnection } = require('../queues/redisConnection');
 const {
   updateMediaEmbeddingStatus,
-  saveProductMediaVector,
-  linkPostToProduct,
 } = require('../db/intelligenceDB');
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
@@ -56,21 +54,6 @@ const processEmbeddingJob = async (job) => {
     // Lấy vector từ Qdrant response (AI service đã lưu Qdrant, trả về dim)
     // Lưu status vào PostgreSQL post_media (không lưu lại vector — đã có trong Qdrant)
     await updateMediaEmbeddingStatus(mediaId, 'done');
-
-    // Nếu có liên kết sản phẩm, lưu vào product_media_vectors
-    if (productId && productName) {
-      await saveProductMediaVector({
-        productId,
-        productName,
-        postId,
-        pageId,
-        imageUrl,
-        imageEmbedding: null,  // vector đã ở Qdrant, không lưu lại PostgreSQL để tiết kiệm dung lượng
-        isPrimary: false,
-        similarityScore: null,
-      });
-    }
-
     return { success: true, mediaId, vectorDim: result.vector_dim };
 
   } catch (err) {

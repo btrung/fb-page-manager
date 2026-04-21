@@ -123,6 +123,7 @@ services:
     build: ./ai-service
     volumes:
       - ./ai-service:/app
+      - hf_cache:/root/.cache/huggingface
     ports:
       - "8000:8000"
     environment:
@@ -140,3 +141,4 @@ volumes:
   redis_data:
   postgres_data:
   qdrant_data:
+  hf_cache:
