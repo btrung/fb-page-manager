@@ -75,6 +75,7 @@ const addEmbeddingJobsBulk = async (items) => {
       imageUrl: item.imageUrl,
       productId: item.productId || null,
       productName: item.productName || null,
+      postCreatedTime: item.postCreatedTime || null,
     },
     opts: {
       ...EMBEDDING_JOB_OPTIONS,

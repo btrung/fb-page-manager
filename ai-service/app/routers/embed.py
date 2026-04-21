@@ -31,6 +31,7 @@ class EmbedImageRequest(BaseModel):
     user_id: str
     product_id: Optional[str] = None
     product_name: Optional[str] = None
+    post_created_time: Optional[str] = None
 
 
 class EmbedImageResponse(BaseModel):
@@ -48,6 +49,7 @@ class BatchImageItem(BaseModel):
     user_id: str
     product_id: Optional[str] = None
     product_name: Optional[str] = None
+    post_created_time: Optional[str] = None
 
 
 class EmbedImagesBatchRequest(BaseModel):
@@ -70,6 +72,7 @@ class EmbedPostTextRequest(BaseModel):
     product_id: Optional[str] = None
     is_sale_post: bool = False
     current_price: Optional[int] = None
+    post_created_time: Optional[str] = None
 
 
 class EmbedPostTextResponse(BaseModel):
@@ -103,6 +106,7 @@ async def embed_single_image(req: EmbedImageRequest):
         "user_id": req.user_id,
         "image_url": req.image_url,
         "product_name": req.product_name,
+        "post_created_time": req.post_created_time,
     }
 
     ok = await qdrant_service.upsert_image_vector(
@@ -167,6 +171,7 @@ async def embed_images_batch(req: EmbedImagesBatchRequest):
                 "user_id": item.user_id,
                 "image_url": item.image_url,
                 "product_name": item.product_name,
+                "post_created_time": item.post_created_time,
             },
         })
         results.append(EmbedImageResponse(
@@ -218,6 +223,7 @@ async def embed_post_text(req: EmbedPostTextRequest):
             "user_id": req.user_id,
             "product_name": req.product_name,
             "current_price": req.current_price,
+            "post_created_time": req.post_created_time,
         },
     )
 

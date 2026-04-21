@@ -289,6 +289,7 @@ const processCrawlJob = async (job) => {
             product_id: null,
             is_sale_post: llm.is_sale_post ?? false,
             current_price: llm.price || null,
+            post_created_time: post.created_time || null,
           }, { timeout: 120000 }).catch((err) => {
             console.warn(`[CRAWL] Text embed thất bại post ${post.id}: ${err.message}`);
           });
@@ -309,6 +310,7 @@ const processCrawlJob = async (job) => {
               userId,
               imageUrl,
               productName: llm.extracted_product_name || null,
+              postCreatedTime: post.created_time || null,
             });
           }
         }

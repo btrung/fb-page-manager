@@ -23,10 +23,10 @@ const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 // =============================================
 // Helper: gọi AI service embed 1 ảnh
 // =============================================
-const callEmbedImage = async ({ mediaId, imageUrl, postId, pageId, userId, productId, productName }) => {
+const callEmbedImage = async ({ mediaId, imageUrl, postId, pageId, userId, productId, productName, postCreatedTime }) => {
   const response = await axios.post(
     `${AI_SERVICE_URL}/embed/image`,
-    { media_id: mediaId, image_url: imageUrl, post_id: postId, page_id: pageId, user_id: userId, product_id: productId, product_name: productName },
+    { media_id: mediaId, image_url: imageUrl, post_id: postId, page_id: pageId, user_id: userId, product_id: productId, product_name: productName, post_created_time: postCreatedTime },
     { timeout: 60000 }, // 1 phút — ảnh cần download + CLIP encode
   );
   return response.data;
@@ -36,12 +36,12 @@ const callEmbedImage = async ({ mediaId, imageUrl, postId, pageId, userId, produ
 // Processor
 // =============================================
 const processEmbeddingJob = async (job) => {
-  const { mediaId, postId, pageId, userId, imageUrl, productId, productName } = job.data;
+  const { mediaId, postId, pageId, userId, imageUrl, productId, productName, postCreatedTime } = job.data;
 
   try {
     // Gọi AI service — download ảnh, CLIP encode, lưu Qdrant
     const result = await callEmbedImage({
-      mediaId, imageUrl, postId, pageId, userId, productId, productName,
+      mediaId, imageUrl, postId, pageId, userId, productId, productName, postCreatedTime,
     });
 
     if (!result.success) {
