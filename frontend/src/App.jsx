@@ -6,6 +6,7 @@ import DashboardPage from './pages/DashboardPage';
 import PostsPage from './pages/PostsPage';
 import IntelligencePage from './pages/IntelligencePage';
 import ChatPage from './pages/ChatPage';
+import SettingsPage from './pages/SettingsPage';
 import LoadingSpinner from './components/LoadingSpinner';
 
 // Route chỉ dành cho user đã login
@@ -62,6 +63,14 @@ const AppRoutes = () => (
       element={
         <PrivateRoute>
           <ChatPage />
+        </PrivateRoute>
+      }
+    />
+    <Route
+      path="/settings"
+      element={
+        <PrivateRoute>
+          <SettingsPage />
         </PrivateRoute>
       }
     />

@@ -470,8 +470,9 @@ Ví dụ: "Anh/chị đang tìm sản phẩm gì vậy ạ?"
 - [ ] Real-time: SSE hoặc polling 3s
 
 ### Phase 5 — Settings Page (1h)
-- [ ] `ChatSettingsPage.jsx` — bật/tắt AI per fanpage + cấu hình khung giờ
-- [ ] API: `GET/PUT /api/chat/settings/:pageId`
+- [x] `SettingsPage.jsx` — toggle AI per fanpage + active hours editor (theo ngày + giờ)
+- [x] API: `GET/PUT /api/chat/settings/:pageId` (đã có từ Phase 1)
+- [x] Route `/settings` + Navbar tab ⚙️ Cài đặt
 
 ### Phase 6 — Polish & Edge Cases (1h)
 - [ ] Alert khi có `Dừng` mới (notification badge)
