@@ -23,7 +23,8 @@ const getAiPageSettings = async (userId, pageId) => {
 const getAiPageSettingsByPageId = async (pageId) => {
   const { rows } = await pool.query(
     `SELECT id, user_id AS "userId", page_id AS "pageId",
-            ai_enabled AS "aiEnabled", active_hours AS "activeHours"
+            ai_enabled AS "aiEnabled", active_hours AS "activeHours",
+            reply_style AS "replyStyle"
      FROM ai_page_settings
      WHERE page_id = $1`,
     [pageId]
@@ -34,7 +35,8 @@ const getAiPageSettingsByPageId = async (pageId) => {
 const getAllAiPageSettings = async (userId) => {
   const { rows } = await pool.query(
     `SELECT id, page_id AS "pageId", ai_enabled AS "aiEnabled",
-            active_hours AS "activeHours", updated_at AS "updatedAt"
+            active_hours AS "activeHours", reply_style AS "replyStyle",
+            updated_at AS "updatedAt"
      FROM ai_page_settings
      WHERE user_id = $1
      ORDER BY page_id`,
@@ -43,16 +45,17 @@ const getAllAiPageSettings = async (userId) => {
   return rows;
 };
 
-const upsertAiPageSettings = async (userId, pageId, { aiEnabled, activeHours }) => {
+const upsertAiPageSettings = async (userId, pageId, { aiEnabled, activeHours, replyStyle }) => {
   const { rows } = await pool.query(
-    `INSERT INTO ai_page_settings (user_id, page_id, ai_enabled, active_hours, updated_at)
-     VALUES ($1, $2, $3, $4, NOW())
+    `INSERT INTO ai_page_settings (user_id, page_id, ai_enabled, active_hours, reply_style, updated_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
      ON CONFLICT (user_id, page_id) DO UPDATE SET
        ai_enabled   = EXCLUDED.ai_enabled,
        active_hours = EXCLUDED.active_hours,
+       reply_style  = EXCLUDED.reply_style,
        updated_at   = NOW()
-     RETURNING id, ai_enabled AS "aiEnabled", active_hours AS "activeHours"`,
-    [userId, pageId, aiEnabled ?? false, activeHours ?? null]
+     RETURNING id, ai_enabled AS "aiEnabled", active_hours AS "activeHours", reply_style AS "replyStyle"`,
+    [userId, pageId, aiEnabled ?? false, activeHours ?? null, replyStyle ?? null]
   );
   return rows[0];
 };
@@ -69,7 +72,10 @@ const getOrCreateSession = async ({ pageId, userId, customerPsid, customerName, 
             customer_psid AS "customerPsid", customer_name AS "customerName",
             customer_avatar AS "customerAvatar", intent, ai_mode AS "aiMode",
             cooldown_until AS "cooldownUntil", ai_turn_count AS "aiTurnCount",
-            last_message_at AS "lastMessageAt", created_at AS "createdAt"
+            last_message_at AS "lastMessageAt", created_at AS "createdAt",
+            identified_product AS "identifiedProduct",
+            customer_mood AS "customerMood",
+            clarify_count AS "clarifyCount"
      FROM chat_sessions
      WHERE page_id = $1 AND customer_psid = $2`,
     [pageId, customerPsid]
@@ -97,7 +103,10 @@ const getOrCreateSession = async ({ pageId, userId, customerPsid, customerName, 
                customer_psid AS "customerPsid", customer_name AS "customerName",
                customer_avatar AS "customerAvatar", intent, ai_mode AS "aiMode",
                cooldown_until AS "cooldownUntil", ai_turn_count AS "aiTurnCount",
-               last_message_at AS "lastMessageAt", created_at AS "createdAt"`,
+               last_message_at AS "lastMessageAt", created_at AS "createdAt",
+               identified_product AS "identifiedProduct",
+               customer_mood AS "customerMood",
+               clarify_count AS "clarifyCount"`,
     [pageId, userId, customerPsid, customerName || null, customerAvatar || null]
   );
   return rows[0];
@@ -109,7 +118,10 @@ const getSessionById = async (sessionId) => {
             customer_psid AS "customerPsid", customer_name AS "customerName",
             customer_avatar AS "customerAvatar", intent, ai_mode AS "aiMode",
             cooldown_until AS "cooldownUntil", ai_turn_count AS "aiTurnCount",
-            last_message_at AS "lastMessageAt", created_at AS "createdAt"
+            last_message_at AS "lastMessageAt", created_at AS "createdAt",
+            identified_product AS "identifiedProduct",
+            customer_mood AS "customerMood",
+            clarify_count AS "clarifyCount"
      FROM chat_sessions WHERE id = $1`,
     [sessionId]
   );
@@ -123,6 +135,9 @@ const getSessionsByUser = async (userId, { intentFilter, aiModeFilter } = {}) =>
            s.customer_avatar AS "customerAvatar", s.intent, s.ai_mode AS "aiMode",
            s.cooldown_until AS "cooldownUntil", s.ai_turn_count AS "aiTurnCount",
            s.last_message_at AS "lastMessageAt",
+           s.identified_product AS "identifiedProduct",
+           s.customer_mood AS "customerMood",
+           s.clarify_count AS "clarifyCount",
            -- Tin nhắn cuối cùng
            (SELECT content FROM chat_messages
             WHERE session_id = s.id ORDER BY created_at DESC LIMIT 1) AS "lastMessageContent",
@@ -200,6 +215,22 @@ const touchSession = async (sessionId) => {
   await pool.query(
     `UPDATE chat_sessions SET last_message_at = NOW() WHERE id = $1`,
     [sessionId]
+  );
+};
+
+const updateSessionIntelligence = async (sessionId, { identifiedProduct, customerMood, clarifyCount } = {}) => {
+  await pool.query(
+    `UPDATE chat_sessions SET
+       identified_product = COALESCE($1::jsonb, identified_product),
+       customer_mood      = COALESCE($2, customer_mood),
+       clarify_count      = COALESCE($3, clarify_count)
+     WHERE id = $4`,
+    [
+      identifiedProduct != null ? JSON.stringify(identifiedProduct) : null,
+      customerMood || null,
+      clarifyCount ?? null,
+      sessionId,
+    ]
   );
 };
 
@@ -422,6 +453,7 @@ module.exports = {
   setCooldown,
   incrementTurnCount,
   touchSession,
+  updateSessionIntelligence,
   getUnrepliedSessions,
   // Messages
   saveMessage,

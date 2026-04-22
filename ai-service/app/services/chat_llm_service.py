@@ -75,66 +75,93 @@ async def _call_groq(system_prompt: str, user_content: str, max_tokens: int = 30
 # Intent Classifier
 # =============================================
 
-_INTENT_SYSTEM = """Bạn phân loại ý định mua hàng của khách qua tin nhắn Facebook.
+_INTENT_SYSTEM = """Bạn phân tích hội thoại bán hàng Facebook và trả về JSON.
 
-Trả về JSON: {"intent": "...", "reason": "..."}
+Trả về JSON: {"intent": "...", "mood": "...", "identified_product": null_or_object, "reason": "..."}
 
-Các intent:
+intent (ý định mua):
 - "Muốn Mua": hỏi giá, đặt hàng, hỏi còn hàng, muốn mua
 - "Đang Tư Vấn": hỏi thông tin SP, so sánh, hỏi chất lượng/mẫu mã
 - "Đang Chốt": đã đồng ý mua, đang cung cấp tên/SĐT/địa chỉ
 - "Khách Đùa": chào hỏi linh tinh, spam, không liên quan sản phẩm
 - "Đã Xác Nhận": khách vừa xác nhận đồng ý sau tin AI tổng kết đơn hàng (ok/đúng rồi/xác nhận/được/đặt đi)
 
+mood (tâm trạng khách):
+- "positive": vui vẻ, hứng thú, nhiệt tình
+- "neutral": bình thường, trung lập
+- "negative": bực bội, khó chịu, không hài lòng
+- "urgent": gấp, cần ngay, hỏi nhanh
+
+identified_product: object nếu khách đang hỏi về sản phẩm cụ thể, null nếu chưa rõ.
+  Format: {"name": "tên SP khách đề cập", "query": "cụm từ tốt nhất để tìm kiếm SP này"}
+
 Chỉ trả về JSON thuần, không giải thích thêm."""
 
 
 async def classify_intent(messages: list[dict]) -> dict:
     """
-    Phân loại intent từ lịch sử hội thoại.
+    Phân loại intent + mood + identified_product từ lịch sử hội thoại.
     messages: [{"role": "customer|ai|human", "content": "..."}]
-    Trả về: {"intent": str, "reason": str}
+    Trả về: {"intent": str, "mood": str, "identified_product": dict|None, "reason": str}
     """
     history = "\n".join(
         f"[{m['role'].upper()}]: {m['content']}"
-        for m in messages[-10:]  # chỉ lấy 10 tin cuối
+        for m in messages[-10:]
         if m.get("content")
     )
 
-    result = await _call_groq(_INTENT_SYSTEM, f"Lịch sử hội thoại:\n{history}", max_tokens=100)
+    result = await _call_groq(_INTENT_SYSTEM, f"Lịch sử hội thoại:\n{history}", max_tokens=150)
 
+    empty = {"intent": "Khách Đùa", "mood": "neutral", "identified_product": None, "reason": "Không thể phân loại"}
     if not result:
-        return {"intent": "Khách Đùa", "reason": "Không thể phân loại"}
+        return empty
 
     try:
-        # Lấy JSON từ response (có thể có text thừa)
         start = result.find("{")
         end = result.rfind("}") + 1
         parsed = json.loads(result[start:end])
         intent = parsed.get("intent", "Khách Đùa")
-        valid = {"Muốn Mua", "Đang Tư Vấn", "Đang Chốt", "Khách Đùa", "Đã Xác Nhận"}
-        if intent not in valid:
+        valid_intents = {"Muốn Mua", "Đang Tư Vấn", "Đang Chốt", "Khách Đùa", "Đã Xác Nhận"}
+        if intent not in valid_intents:
             intent = "Khách Đùa"
-        return {"intent": intent, "reason": parsed.get("reason", "")}
+        mood = parsed.get("mood", "neutral")
+        if mood not in {"positive", "neutral", "negative", "urgent"}:
+            mood = "neutral"
+        identified_product = parsed.get("identified_product")
+        if identified_product and not isinstance(identified_product, dict):
+            identified_product = None
+        return {
+            "intent": intent,
+            "mood": mood,
+            "identified_product": identified_product,
+            "reason": parsed.get("reason", ""),
+        }
     except Exception:
-        return {"intent": "Khách Đùa", "reason": "Parse error"}
+        return {"intent": "Khách Đùa", "mood": "neutral", "identified_product": None, "reason": "Parse error"}
 
 
 # =============================================
 # Reply Generator
 # =============================================
 
-_REPLY_SYSTEM = """Bạn là nhân viên tư vấn bán hàng Facebook. Trả lời NGẮN GỌN (tối đa 3 câu).
+_REPLY_SYSTEM_BASE = """Bạn là nhân viên tư vấn bán hàng Facebook. Trả lời NGẮN GỌN (tối đa 3 câu).
 
 Quy tắc:
 - Giới thiệu sản phẩm với giá + khuyến mãi nếu có
 - Kết thúc bằng 1 câu hook ngắn (hỏi có muốn đặt không, hoặc mời xem thêm)
 - KHÔNG dài dòng, KHÔNG giải thích nhiều
-- Xưng "em", gọi khách "anh/chị"
+- Xưng "em", gọi khách "anh/chị" (nếu biết tên thì thêm tên)
 - Chỉ trả về nội dung tin nhắn, không thêm tiêu đề hay ghi chú"""
 
 
-async def generate_reply(customer_message: str, products: list[dict]) -> str:
+async def generate_reply(
+    customer_message: str,
+    products: list[dict],
+    mood: str = "neutral",
+    reply_style: Optional[str] = None,
+    customer_name: Optional[str] = None,
+    identified_product: Optional[dict] = None,
+) -> str:
     """
     Tạo reply tư vấn dựa trên sản phẩm tìm được từ Qdrant.
     products: [{"product_name", "content", "price", "promotion", "image_url", "score"}]
@@ -142,13 +169,23 @@ async def generate_reply(customer_message: str, products: list[dict]) -> str:
     if not products:
         return "Dạ em đang tìm sản phẩm phù hợp, anh/chị cho em hỏi thêm là đang cần sản phẩm gì ạ?"
 
+    # Build system prompt
+    system = _REPLY_SYSTEM_BASE
+    if reply_style:
+        system += f"\n\nPhong cách trả lời theo yêu cầu shop: {reply_style}"
+    if mood == "negative":
+        system += "\nKhách đang có vẻ không hài lòng — hãy đặc biệt lịch sự và thông cảm."
+    elif mood == "urgent":
+        system += "\nKhách đang cần gấp — trả lời nhanh gọn, ưu tiên thông tin giá và đặt hàng."
+
     # Format top 1-2 sản phẩm
     product_context = ""
     for i, p in enumerate(products[:2], 1):
-        name = p.get("product_name") or p.get("payload", {}).get("product_name", "Sản phẩm")
-        price = p.get("price") or p.get("payload", {}).get("current_price")
-        promotion = p.get("promotion") or p.get("payload", {}).get("what_is_promotion", "")
-        content = p.get("content", "")[:200]
+        payload = p.get("payload", p)  # search_similar_posts trả về flat dict (payload merged)
+        name = payload.get("product_name", "Sản phẩm")
+        price = payload.get("current_price") or payload.get("price")
+        promotion = payload.get("what_is_promotion") or payload.get("promotion", "")
+        content = payload.get("content", "")[:200]
 
         price_str = f"{price:,}đ".replace(",", ".") if price else "liên hệ"
         product_context += f"SP{i}: {name} — Giá: {price_str}"
@@ -158,8 +195,14 @@ async def generate_reply(customer_message: str, products: list[dict]) -> str:
             product_context += f"\nMô tả: {content}"
         product_context += "\n"
 
-    user_content = f"Tin nhắn khách: {customer_message}\n\nSản phẩm:\n{product_context}"
-    result = await _call_groq(_REPLY_SYSTEM, user_content, max_tokens=200)
+    user_content = f"Tin nhắn khách: {customer_message}\n"
+    if customer_name:
+        user_content += f"Tên khách: {customer_name}\n"
+    if identified_product:
+        user_content += f"Sản phẩm khách đang hỏi: {identified_product.get('name', '')}\n"
+    user_content += f"\nSản phẩm tìm được:\n{product_context}"
+
+    result = await _call_groq(system, user_content, max_tokens=200)
     return result or "Dạ em sẽ tư vấn ngay, anh/chị chờ em một chút nhé!"
 
 
@@ -175,6 +218,24 @@ async def generate_probe(customer_message: str) -> str:
     """Tạo câu hỏi probe cho cold customer."""
     result = await _call_groq(_PROBE_SYSTEM, f"Tin nhắn khách: {customer_message}", max_tokens=80)
     return result or "Dạ anh/chị đang tìm sản phẩm gì vậy ạ? Em có thể hỗ trợ ngay ạ!"
+
+
+# =============================================
+# Clarify Generator (khi không rõ sản phẩm)
+# =============================================
+
+_CLARIFY_SYSTEM = """Bạn là nhân viên tư vấn bán hàng. Khách đang hỏi nhưng chưa rõ cụ thể sản phẩm nào.
+Hỏi 1 câu ngắn gọn để làm rõ sản phẩm khách muốn. Xưng "em", gọi "anh/chị".
+Chỉ trả về nội dung câu hỏi, không thêm gì."""
+
+
+async def generate_clarify(customer_message: str, identified_product: Optional[dict] = None) -> str:
+    """Tạo câu hỏi làm rõ sản phẩm khi chưa xác định được."""
+    context = f"Tin nhắn khách: {customer_message}"
+    if identified_product:
+        context += f"\nSản phẩm khách đề cập (chưa rõ): {identified_product.get('name', '')}"
+    result = await _call_groq(_CLARIFY_SYSTEM, context, max_tokens=80)
+    return result or "Dạ anh/chị đang quan tâm đến sản phẩm nào vậy ạ? Em tư vấn cụ thể hơn được ạ!"
 
 
 # =============================================

@@ -16,9 +16,9 @@
 
 **Nguyên tắc:**
 - Customer nhắn vào fanpage = hot data → phải tận dụng
-- Không có intent mua → không tốn token, cooldown 5 tiếng
+- Không có intent mua → AI probe 1 lần, nếu vẫn không rõ → chuyển HUMAN mode
 - Đã xác định intent → truy vấn DB + Qdrant → reply ngắn, có ảnh, có hook
-- AI thử 1-2 lần không ăn → tag `HUMAN_NEEDED`, dừng lại, báo người dùng vào chốt
+- AI không ăn → chuyển HUMAN mode (người vào tư vấn tiếp), không dùng cooldown thời gian
 - Kịch bản AI chỉ có 1: tìm sản phẩm → đưa nhanh → hỏi thông tin → chốt đơn
 
 ---
@@ -31,8 +31,7 @@ Khách nhắn tin
     ▼
 [Intent Detection] ← phân tích toàn bộ session hiện tại
     │
-    ├─ COLD / SPAM → thử probe 1 lần → nếu vẫn cold → COOLDOWN 5h
-    │                                                        (không reply nữa, chuyển qa HUMAN xử lí)
+    ├─ COLD / SPAM → thử probe 1 lần → nếu vẫn cold → chuyển HUMAN mode (không dùng cooldown thời gian)
     │
     ├─ BUYING / CONSULTING ──────────────────────────────────────────┐
     │                                                                 │
@@ -66,11 +65,18 @@ Mục đích: **báo cho user biết AI đang đánh giá vị khách này như 
 |---|---|---|---|
 | `Muốn Mua` | 🟢 Xanh | Muốn mua, hỏi giá, đặt hàng | Reply ngay, tìm SP |
 | `Đang Tư Vấn` | 🔵 Xanh dương | Hỏi thông tin SP, so sánh | Tư vấn, dẫn dắt |
-| `Khách Đùa` | ⚪ Xám | Hỏi linh tinh, không rõ ý | Probe 1 lần |
-| `Không Nhu Cầu` | 🔴 Đỏ | Đã xác nhận không có nhu cầu | Không reply, dừng |
+| `Khách Đùa` | ⚪ Xám | Hỏi linh tinh, không rõ ý định mua | Gửi probe 1 câu ngắn để kéo vào hội thoại |
+| `Không Nhu Cầu` | 🔴 Đỏ | AI hỏi 3 lần không xác định được sản phẩm | Chuyển HUMAN mode — AI dừng hẳn, người tư vấn tiếp |
 | `Đang Chốt` | 🟡 Vàng | Đang lấy thông tin để chốt | Hỏi tên/SĐT/địa chỉ |
 | `Đã Chốt` | 🟣 Tím | Đã chốt xong | Lưu đơn, AI dừng |
-| `Dừng` | 🟠 Cam | AI bỏ cuộc, cần người vào | Alert người dùng |
+| `Dừng` | 🟠 Cam | Khách dứt khoát không có nhu cầu / yêu cầu dừng | Chuyển HUMAN mode — AI dừng hẳn, người tư vấn tiếp |
+
+**Điều kiện chuyển HUMAN mode (AI tự động chuyển, không dùng cooldown thời gian):**
+- `Khách Đùa` → AI đã probe nhưng khách vẫn không xác định sản phẩm sau nhiều lần → `Không Nhu Cầu` → HUMAN mode
+- `Không Nhu Cầu` → AI hỏi ≥ 3 lần mà khách cứ không tập trung xác định sản phẩm → chuyển HUMAN mode ngay
+- `Dừng` → khách dứt khoát không muốn mua / yêu cầu dừng → chuyển HUMAN mode ngay
+- AI reply ≥ 10 lượt mà chưa tiến triển → chuyển HUMAN mode ngay
+- **Khi người bật lại AI mode trên UI → AI hoạt động bình thường ngay, không cần đợi, không cooldown**
 
 ### 2. AI Mode Tag — song song với Intent, dùng để điều khiển AI
 
@@ -184,34 +190,32 @@ Facebook Messenger Webhook → POST /api/chat/webhook
 ### 2. Chat Worker (BullMQ)
 ```
 chatQueue job:
-1. Load session + lịch sử 10 tin nhắn gần nhất
+1. Load session + lịch sử 20 tin nhắn gần nhất
 2. Kiểm tra ai_page_settings:
    - ai_enabled = false → skip toàn bộ fanpage
    - active_hours có giá trị → kiểm tra giờ hiện tại (timezone) → ngoài khung giờ thì skip
 3. Kiểm tra session.ai_mode:
    - ai_mode = 'HUMAN' → skip (người tư vấn đang cầm)
-4. Kiểm tra cooldown (intent = Không Nhu Cầu + cooldown_until chưa hết) → skip
+4. Nếu ai_turn_count >= 10 → chuyển HUMAN mode → skip (không dùng cooldown thời gian)
 5. Gọi Intent Classifier (Groq) với context session
 6. Update intent vào DB
-7. Nếu intent = Muốn Mua / Đang Tư Vấn:
-   a. Extract query từ tin nhắn (tên SP / mô tả)
-   b. Nếu có ảnh → Qdrant image search (product_images)
-   c. Nếu có text → Qdrant text search (post_embeddings)
-   d. Lấy top 3 kết quả
-   e. Gọi Reply Generator (Groq) → reply ngắn + ảnh SP
-   f. Gửi reply qua Facebook Send API
-   g. Tăng ai_turn_count
+7. Nếu intent = Không Nhu Cầu hoặc Dừng:
+   → chuyển ai_mode = 'HUMAN' ngay lập tức (không cooldown)
+   → AI dừng hẳn cho đến khi người bật lại AI mode thủ công
 8. Nếu intent = Khách Đùa:
-   a. ai_turn_count < 1 → probe 1 lần
-   b. ai_turn_count >= 1 → set Không Nhu Cầu + cooldown_until = dừng
-9. Nếu intent = Đang Chốt:
-   - Đã có đủ tên + SĐT + địa chỉ → gửi tin xác nhận tổng kết (is_confirmation_summary = true)
-   - Đánh dấu chờ khách confirm
-10. Nếu nhận được tin xác nhận từ khách (is_customer_confirmed = true):
+   → Gửi probe 1 câu ngắn để kéo khách vào hội thoại, tiếp tục AI
+9. Nếu intent = Muốn Mua / Đang Tư Vấn:
+   a. Nếu có ảnh → Qdrant image search (product_images)
+   b. Nếu có text → Qdrant text search (post_embeddings), lấy top 3
+   c. Gọi Reply Generator (Groq) → reply ngắn + ảnh SP đầu tiên (nếu có)
+   d. Gửi reply qua Facebook Send API
+   e. Tăng ai_turn_count
+10. Nếu intent = Đang Chốt:
+    - Thiếu tên/SĐT/địa chỉ → hỏi thêm thông tin còn thiếu
+    - Đủ thông tin → gửi tin xác nhận tổng kết (is_confirmation_summary = true)
+11. Nếu intent = Đã Xác Nhận (khách reply ok):
     - Tạo chat_order với status = PENDING_REVIEW
     - Set intent = Đã Chốt, ai_mode = HUMAN
-    - Alert user
-11. Nếu ai_turn_count >= 5 → set intent = Dừng, ai_mode = HUMAN → alert user
 ```
 
 ### 2b. AI Mode Activation (khi user bật lại AI Hoạt Động)
@@ -479,6 +483,124 @@ Ví dụ: "Anh/chị đang tìm sản phẩm gì vậy ạ?"
 - [x] Human override: gõ tin nhắn khi AI mode → auto-switch sang HUMAN trước khi gửi + hint text
 - [x] Ngoài khung giờ: chatWorker đã có `isWithinActiveHours` check (Phase 2)
 - [ ] Test end-to-end với real Messenger (cần môi trường thật)
+
+---
+
+### Phase 7 — Message Intelligence (Lọc Tin Nhắn Thông Minh)
+
+> Mục tiêu: AI **hiểu sâu** tin nhắn khách trước khi trả lời — xác định sản phẩm, đọc tâm trạng, cá nhân hóa reply. Đây là giai đoạn cốt lõi tạo ấn tượng đầu tiên với khách.
+
+#### 7.1 Schema thêm mới
+
+**`chat_sessions`** — thêm 3 field:
+```sql
+identified_product  JSONB     -- SP khách đang hỏi: {name, price, image_url, post_id} | null
+customer_mood       VARCHAR   -- tâm trạng gần nhất: curious|excited|hesitant|annoyed|neutral
+clarify_count       INT DEFAULT 0  -- số lần AI đã hỏi làm rõ SP nhưng chưa xác định được
+```
+
+**`ai_page_settings`** — thêm 1 field:
+```sql
+reply_style  TEXT  -- mô tả giọng điệu AI muốn dùng, do user tự viết
+             -- vd: "Thân thiện, xưng em, không dùng nhiều emoji, tập trung vào giá trị SP"
+```
+
+#### 7.2 AI Pipeline mới (thay thế flow cũ ở Phase 2-3)
+
+```
+Tin nhắn khách đến
+        │
+        ▼
+[BƯỚC 1 — LLM ANALYZE] — 1 call Groq duy nhất, trả về JSON:
+  {
+    intent:             "Muốn Mua|Đang Tư Vấn|Khách Đùa|...",
+    mood:               "curious|excited|hesitant|annoyed|neutral",
+    identified_product: "tên sản phẩm khách đang hỏi" | null,
+    reason:             "lý do ngắn"
+  }
+  → Lưu intent + mood + identified_product vào session ngay
+        │
+        ▼
+[BƯỚC 2 — ROUTING theo identified_product + intent]
+        │
+        ├─ identified_product = null VÀ intent = Muốn Mua/Đang Tư Vấn
+        │     → clarify_count < 2: hỏi 1 câu lịch sự làm rõ SP
+        │     → clarify_count >= 2: DỪNG → chuyển HUMAN mode
+        │
+        ├─ identified_product = null VÀ intent = Khách Đùa/Không Nhu Cầu/Dừng
+        │     → xử lý theo điều kiện HUMAN mode cũ (Phase 6)
+        │
+        └─ identified_product != null
+              → [BƯỚC 3 — PRODUCT ENRICHMENT]
+```
+
+#### 7.3 Product Enrichment (khi đã biết SP)
+
+```
+identified_product (tên SP từ LLM)
+        │
+        ▼
+[Qdrant text search] — query = tên SP, filter user_id
+  → Lấy: product_name, current_price, image_url (từ product_images collection)
+        │
+        ▼
+[Optional: FB Profile crawl]
+  GET /{customer_psid}?fields=name,picture&access_token={page_token}
+  → Lấy: tên thật khách (nếu chưa có)
+  → Dùng để cá nhân hóa: "Dạ chị Hoa ơi..."
+        │
+        ▼
+[BƯỚC 4 — GENERATE REPLY] — Groq với đầy đủ context:
+  System prompt bao gồm:
+    - reply_style (từ ai_page_settings — user tự viết)
+    - mood của khách → điều chỉnh tone
+  User content:
+    - Tin nhắn khách + lịch sử 5 tin gần nhất
+    - SP: tên + giá + KM (nếu có)
+    - Tên khách (nếu crawl được)
+  → Reply ngắn gọn, đúng trọng tâm, đúng giọng điệu
+        │
+        ▼
+[Gửi] — ảnh SP trước (nếu có) → text reply sau
+```
+
+#### 7.4 UI — CustomerPanel cập nhật (tab Thông tin khách)
+
+```
+┌──────────────────────────────────────────┐
+│  🎯 SP đang hỏi                          │
+│  Áo Thun Lạnh Thể Thao — 385.000đ       │  ← identified_product (realtime)
+│  [xem ảnh]                               │
+├──────────────────────────────────────────┤
+│  😊 Tâm trạng: Tò mò (curious)          │  ← customer_mood (cập nhật mỗi tin)
+├──────────────────────────────────────────┤
+│  👤 Nguyễn Văn A                         │  ← tên từ FB profile (nếu crawl được)
+│  PSID: xxx                               │
+│  Intent: 🟢 Muốn Mua                    │
+│  AI Mode: 🤖 AI Hoạt Động               │
+└──────────────────────────────────────────┘
+```
+
+#### 7.5 Reply Style — Settings page
+
+Thêm vào `SettingsPage.jsx` bên dưới mỗi fanpage card:
+```
+┌─────────────────────────────────────────────────┐
+│  🗣️ Giọng điệu AI                               │
+│  ┌─────────────────────────────────────────┐    │
+│  │ Thân thiện, xưng em, gọi anh/chị,      │    │  ← textarea, user tự viết
+│  │ không dùng nhiều emoji, tập trung       │    │
+│  │ vào giá trị và tính năng sản phẩm      │    │
+│  └─────────────────────────────────────────┘    │
+│  [Lưu giọng điệu]                               │
+└─────────────────────────────────────────────────┘
+```
+
+#### 7.6 Tóm tắt điều kiện DỪNG trong Phase 7
+
+- `identified_product = null` + `clarify_count >= 2` + intent vẫn Muốn Mua/Đang Tư Vấn → **DỪNG → HUMAN mode**
+- `identified_product = null` + intent = Không Nhu Cầu/Dừng/Khách Đùa → xử lý theo Phase 6
+- `identified_product != null` → generate reply bình thường, không bao giờ DỪNG vì thiếu SP
 
 ---
 

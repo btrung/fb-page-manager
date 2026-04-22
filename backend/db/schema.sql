@@ -358,3 +358,12 @@ CREATE INDEX IF NOT EXISTS idx_chat_orders_user
 
 CREATE INDEX IF NOT EXISTS idx_chat_orders_status
   ON chat_orders (status) WHERE status = 'PENDING_REVIEW';
+
+-- Phase 7: Message Intelligence — thêm columns vào bảng đã có
+ALTER TABLE chat_sessions
+  ADD COLUMN IF NOT EXISTS identified_product JSONB,
+  ADD COLUMN IF NOT EXISTS customer_mood      VARCHAR(20) DEFAULT 'neutral',
+  ADD COLUMN IF NOT EXISTS clarify_count      INTEGER     DEFAULT 0;
+
+ALTER TABLE ai_page_settings
+  ADD COLUMN IF NOT EXISTS reply_style TEXT;

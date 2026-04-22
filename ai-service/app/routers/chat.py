@@ -1,11 +1,12 @@
 """
 Router /chat — LLM endpoints cho AI Chat feature
-  POST /chat/classify-intent      — phân loại intent hội thoại
-  POST /chat/generate-reply       — tạo reply tư vấn + search sản phẩm
-  POST /chat/generate-probe       — tạo câu hỏi probe cho cold customer
+  POST /chat/classify-intent       — phân loại intent + mood + identified_product
+  POST /chat/generate-reply        — tạo reply tư vấn + search sản phẩm
+  POST /chat/generate-probe        — tạo câu hỏi probe cho cold customer
+  POST /chat/generate-clarify      — tạo câu hỏi làm rõ sản phẩm
   POST /chat/generate-confirmation — tạo tin xác nhận đơn hàng
-  POST /chat/extract-order        — trích xuất thông tin đặt hàng
-  POST /chat/search-by-image      — tìm sản phẩm theo ảnh khách gửi
+  POST /chat/extract-order         — trích xuất thông tin đặt hàng
+  POST /chat/search-by-image       — tìm sản phẩm theo ảnh khách gửi
 """
 import logging
 from typing import Optional
@@ -17,6 +18,7 @@ from app.services.chat_llm_service import (
     classify_intent,
     generate_reply,
     generate_probe,
+    generate_clarify,
     generate_confirmation,
     extract_order_info,
 )
@@ -45,12 +47,21 @@ class GenerateReplyRequest(BaseModel):
     customer_message: str
     page_id: str
     user_id: str
-    image_url: Optional[str] = None  # ảnh khách gửi nếu có
+    image_url: Optional[str] = None
     top_k: int = 3
+    mood: str = "neutral"
+    reply_style: Optional[str] = None
+    customer_name: Optional[str] = None
+    identified_product: Optional[dict] = None
 
 
 class GenerateProbeRequest(BaseModel):
     customer_message: str
+
+
+class GenerateClarifyRequest(BaseModel):
+    customer_message: str
+    identified_product: Optional[dict] = None
 
 
 class GenerateConfirmationRequest(BaseModel):
@@ -124,20 +135,28 @@ async def api_generate_reply(body: GenerateReplyRequest):
             logger.warning(f"[CHAT] Image search failed: {e}")
 
     # Dedup theo product_name, lấy score cao nhất
+    # search_similar_posts trả về flat dict (payload merged vào top level)
     seen = {}
     for p in products:
-        name = p.get("payload", {}).get("product_name") or "unknown"
+        name = p.get("product_name") or p.get("payload", {}).get("product_name") or "unknown"
         if name not in seen or p.get("score", 0) > seen[name].get("score", 0):
             seen[name] = p
     products_deduped = sorted(seen.values(), key=lambda x: x.get("score", 0), reverse=True)[:3]
 
-    reply = await generate_reply(body.customer_message, products_deduped)
+    reply = await generate_reply(
+        body.customer_message,
+        products_deduped,
+        mood=body.mood,
+        reply_style=body.reply_style,
+        customer_name=body.customer_name,
+        identified_product=body.identified_product,
+    )
 
     # Lấy ảnh sản phẩm từ image_results để đính kèm
     product_images = [
-        r.get("payload", {}).get("image_url")
+        (r.get("image_url") or r.get("payload", {}).get("image_url"))
         for r in image_results[:2]
-        if r.get("payload", {}).get("image_url")
+        if r.get("image_url") or r.get("payload", {}).get("image_url")
     ]
 
     return {
@@ -154,6 +173,16 @@ async def api_generate_reply(body: GenerateReplyRequest):
 @router.post("/generate-probe")
 async def api_generate_probe(body: GenerateProbeRequest):
     reply = await generate_probe(body.customer_message)
+    return {"reply": reply}
+
+
+# =============================================
+# POST /chat/generate-clarify
+# =============================================
+
+@router.post("/generate-clarify")
+async def api_generate_clarify(body: GenerateClarifyRequest):
+    reply = await generate_clarify(body.customer_message, body.identified_product)
     return {"reply": reply}
 
 

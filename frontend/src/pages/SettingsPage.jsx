@@ -76,7 +76,9 @@ const ActiveHoursEditor = ({ activeHours, onChange }) => {
 const PageCard = ({ page, setting, onSave }) => {
   const [aiEnabled, setAiEnabled]     = useState(setting?.aiEnabled ?? false);
   const [activeHours, setActiveHours] = useState(setting?.activeHours ?? null);
+  const [replyStyle, setReplyStyle]   = useState(setting?.replyStyle ?? '');
   const [showHours, setShowHours]     = useState(false);
+  const [showStyle, setShowStyle]     = useState(false);
   const [saving, setSaving]           = useState(false);
   const [saved, setSaved]             = useState(false);
 
@@ -84,6 +86,7 @@ const PageCard = ({ page, setting, onSave }) => {
   useEffect(() => {
     setAiEnabled(setting?.aiEnabled ?? false);
     setActiveHours(setting?.activeHours ?? null);
+    setReplyStyle(setting?.replyStyle ?? '');
   }, [setting]);
 
   const handleToggleAi = async () => {
@@ -91,7 +94,7 @@ const PageCard = ({ page, setting, onSave }) => {
     setAiEnabled(next);
     setSaving(true);
     try {
-      await chatApi.updateSettings(page.id, { aiEnabled: next, activeHours });
+      await chatApi.updateSettings(page.id, { aiEnabled: next, activeHours, replyStyle: replyStyle || null });
       flashSaved();
     } catch {
       setAiEnabled(!next); // rollback
@@ -103,8 +106,19 @@ const PageCard = ({ page, setting, onSave }) => {
   const handleSaveHours = async () => {
     setSaving(true);
     try {
-      await chatApi.updateSettings(page.id, { aiEnabled, activeHours });
+      await chatApi.updateSettings(page.id, { aiEnabled, activeHours, replyStyle: replyStyle || null });
       setShowHours(false);
+      flashSaved();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveStyle = async () => {
+    setSaving(true);
+    try {
+      await chatApi.updateSettings(page.id, { aiEnabled, activeHours, replyStyle: replyStyle || null });
+      setShowStyle(false);
       flashSaved();
     } finally {
       setSaving(false);
@@ -204,6 +218,53 @@ const PageCard = ({ page, setting, onSave }) => {
                 className="bg-gray-100 text-gray-600 text-xs px-4 py-1.5 rounded-lg hover:bg-gray-200 transition-colors"
               >
                 Reset 24/7
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Reply style */}
+      <div className="px-5 pb-4">
+        <button
+          onClick={() => setShowStyle((v) => !v)}
+          className="flex items-center justify-between w-full text-sm text-gray-600 hover:text-gray-900 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <span>💬</span>
+            <span>Phong cách trả lời:</span>
+            <span className="font-medium text-gray-800 truncate max-w-[120px]">
+              {replyStyle ? replyStyle.slice(0, 30) + (replyStyle.length > 30 ? '…' : '') : 'Mặc định'}
+            </span>
+          </div>
+          <span className="text-gray-400 text-xs">{showStyle ? '▲' : '▼'}</span>
+        </button>
+
+        {showStyle && (
+          <div className="mt-3 border border-gray-100 rounded-xl p-3 bg-gray-50">
+            <div className="text-xs text-gray-500 mb-2">
+              Mô tả phong cách AI muốn dùng. Ví dụ: "Thân thiện, dùng emoji nhiều" hoặc "Chuyên nghiệp, ngắn gọn"
+            </div>
+            <textarea
+              value={replyStyle}
+              onChange={(e) => setReplyStyle(e.target.value)}
+              placeholder="Ví dụ: Thân thiện, hay dùng emoji, ngắn gọn dưới 3 câu..."
+              rows={3}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-facebook-blue resize-none"
+            />
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={handleSaveStyle}
+                disabled={saving}
+                className="bg-facebook-blue text-white text-xs px-4 py-1.5 rounded-lg font-medium hover:bg-facebook-dark disabled:opacity-40 transition-colors"
+              >
+                Lưu phong cách
+              </button>
+              <button
+                onClick={() => { setReplyStyle(''); }}
+                className="bg-gray-100 text-gray-600 text-xs px-4 py-1.5 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Xoá (dùng mặc định)
               </button>
             </div>
           </div>

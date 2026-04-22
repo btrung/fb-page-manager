@@ -71,11 +71,37 @@ const InfoTab = ({ session, confirmationMessages, onIntentChange, onTagAdd, onTa
         </select>
       </div>
 
-      {/* AI Turn count */}
-      <div className="flex items-center justify-between bg-gray-50 rounded-xl px-3 py-2">
-        <span className="text-gray-500 text-xs">AI replies</span>
-        <span className="text-gray-700 font-semibold text-sm">{session.aiTurnCount ?? 0} / 10</span>
+      {/* AI Turn count + Mood */}
+      <div className="flex gap-2">
+        <div className="flex-1 flex items-center justify-between bg-gray-50 rounded-xl px-3 py-2">
+          <span className="text-gray-500 text-xs">AI replies</span>
+          <span className="text-gray-700 font-semibold text-sm">{session.aiTurnCount ?? 0} / 10</span>
+        </div>
+        {session.customerMood && session.customerMood !== 'neutral' && (
+          <div className={`flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-medium shrink-0 ${
+            session.customerMood === 'positive' ? 'bg-green-50 text-green-700' :
+            session.customerMood === 'negative' ? 'bg-red-50 text-red-600' :
+            session.customerMood === 'urgent'   ? 'bg-orange-50 text-orange-600' :
+            'bg-gray-50 text-gray-500'
+          }`}>
+            {session.customerMood === 'positive' ? '😊' :
+             session.customerMood === 'negative' ? '😤' :
+             session.customerMood === 'urgent'   ? '⚡' : '😐'}
+            {session.customerMood}
+          </div>
+        )}
       </div>
+
+      {/* Identified Product */}
+      {session.identifiedProduct && (
+        <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+          <div className="text-xs text-blue-500 font-medium mb-1">🎯 Sản phẩm quan tâm</div>
+          <div className="text-sm text-blue-800 font-medium">{session.identifiedProduct.name}</div>
+          {session.identifiedProduct.query && session.identifiedProduct.query !== session.identifiedProduct.name && (
+            <div className="text-xs text-blue-400 mt-0.5">query: {session.identifiedProduct.query}</div>
+          )}
+        </div>
+      )}
 
       {/* Tags */}
       <div>

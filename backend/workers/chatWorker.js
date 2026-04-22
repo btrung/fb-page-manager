@@ -1,18 +1,20 @@
 /**
- * Chat Worker — AI pipeline xử lý tin nhắn Messenger
+ * Chat Worker — AI pipeline xử lý tin nhắn Messenger (Phase 7)
  *
  * Luồng:
  *  1. Lấy session + tin nhắn cuối
  *  2. Kiểm tra ai_mode → nếu HUMAN thì bỏ qua
- *  3. Kiểm tra cooldown → nếu chưa hết thì bỏ qua
- *  4. Kiểm tra active hours của page
- *  5. Gọi AI classify-intent
+ *  3. Kiểm tra active hours của page
+ *  4. Gọi AI classify-intent → trả về intent + mood + identified_product
+ *  5. Lưu intelligence vào session
  *  6. Handle theo intent:
- *     - Khách Đùa / Không Nhu Cầu  → probe hoặc cooldown
- *     - Muốn Mua / Đang Tư Vấn     → generate-reply với product search
+ *     - Khách Đùa                  → probe (câu hỏi ngắn kéo vào hội thoại)
+ *     - Muốn Mua / Đang Tư Vấn     → nếu identified_product rõ: generate-reply
+ *                                     nếu chưa rõ và clarify_count < 2: clarify
+ *                                     nếu clarify_count >= 2: vẫn reply với query mờ
  *     - Đang Chốt                  → extract-order info
  *     - Đã Xác Nhận                → tạo đơn hàng, gửi xác nhận cuối
- *     - Dừng                       → không làm gì
+ *     - Không Nhu Cầu / Dừng       → chuyển sang HUMAN mode
  */
 const axios = require('axios');
 const { Worker } = require('bullmq');
@@ -21,11 +23,8 @@ const chatDB = require('../db/chatDB');
 const { sendFbMessage, sendFbImageWithCaption } = require('../utils/fbSendApi');
 
 const AI_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
-
-// Giới hạn số lượt AI tự vấn trước khi cooldown
 const MAX_AI_TURNS = 10;
-// Cooldown khi khách không có nhu cầu (giờ)
-const COOLDOWN_HOURS = 5;
+const MAX_CLARIFY = 2;
 
 // =============================================
 // Helper: gọi AI service
@@ -40,9 +39,9 @@ const getLastCustomerMessage = (messages) =>
   [...messages].reverse().find((m) => m.senderType === 'customer');
 
 const isWithinActiveHours = (activeHours) => {
-  if (!activeHours) return true; // không cài đặt → luôn active
+  if (!activeHours) return true;
   const now = new Date();
-  const day = now.getDay(); // 0=Sun … 6=Sat
+  const day = now.getDay();
   const hhmm = now.getHours() * 100 + now.getMinutes();
 
   const todayKey = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][day];
@@ -66,74 +65,91 @@ const processChatJob = async (job) => {
   const session = await chatDB.getSessionById(sessionId);
   if (!session) return { skipped: 'session_not_found' };
 
-  // Người dùng đang tư vấn tay → AI không xen vào
   if (session.aiMode === 'HUMAN') return { skipped: 'human_mode' };
 
-  // Kiểm tra cooldown
-  if (session.cooldownUntil && new Date(session.cooldownUntil) > new Date()) {
-    return { skipped: 'cooldown' };
-  }
-
-  // Kiểm tra intent Dừng
-  if (session.intent === 'Dừng') return { skipped: 'intent_dung' };
-
-  // Kiểm tra giờ hoạt động
   const aiSettings = await chatDB.getAiPageSettingsByPageId(session.pageId).catch(() => null);
   if (aiSettings && !aiSettings.aiEnabled) return { skipped: 'ai_disabled' };
   if (aiSettings?.activeHours && !isWithinActiveHours(aiSettings.activeHours)) {
     return { skipped: 'outside_active_hours' };
   }
 
-  // Lấy lịch sử hội thoại (tối đa 20 tin)
   const messages = await chatDB.getSessionMessages(sessionId, 20);
   if (!messages.length) return { skipped: 'no_messages' };
 
   const lastCustomer = getLastCustomerMessage(messages);
   if (!lastCustomer) return { skipped: 'no_customer_message' };
 
-  // Giới hạn số lượt AI tự vấn
   if (session.aiTurnCount >= MAX_AI_TURNS) {
-    await chatDB.setCooldown(sessionId, COOLDOWN_HOURS);
+    await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
     return { skipped: 'turn_limit_reached' };
   }
 
-  // ── Bước 1: Phân loại intent ──────────────────────────────────────────
+  // ── Bước 1: Phân loại intent + mood + identified_product ─────────────
   const historyForClassify = messages.map((m) => ({
     role: m.senderType,
     content: m.content || '',
   }));
 
-  const { intent } = await callAI('/classify-intent', { messages: historyForClassify });
+  const classify = await callAI('/classify-intent', { messages: historyForClassify });
+  const { intent, mood, identified_product: identifiedProduct } = classify;
+
   await chatDB.updateSessionIntent(sessionId, intent);
+
+  // Merge identified_product: giữ cái cũ nếu mới null
+  const resolvedProduct = identifiedProduct || session.identifiedProduct || null;
+
+  await chatDB.updateSessionIntelligence(sessionId, {
+    identifiedProduct: resolvedProduct,
+    customerMood:      mood,
+    clarifyCount:      null, // chỉ increment khi cần, không reset
+  });
 
   // ── Bước 2: Handle theo intent ────────────────────────────────────────
   if (intent === 'Dừng' || intent === 'Không Nhu Cầu') {
-    await chatDB.setCooldown(sessionId, COOLDOWN_HOURS);
-    return { handled: 'cooldown_set', intent };
+    await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
+    return { handled: 'switched_to_human', intent };
   }
 
   if (intent === 'Khách Đùa') {
-    // Gửi câu probe ngắn để kéo khách vào hội thoại
     const { reply } = await callAI('/generate-probe', {
       customer_message: lastCustomer.content || '',
     });
-    await _sendAndSave({ session, reply });
+    await _sendAndSave({ session, reply, intent });
     return { handled: 'probe_sent', intent };
   }
 
   if (intent === 'Muốn Mua' || intent === 'Đang Tư Vấn') {
-    // Tìm ảnh từ attachment cuối của khách (nếu có)
+    const clarifyCount = session.clarifyCount || 0;
+
+    // Nếu chưa xác định sản phẩm và còn lượt clarify
+    if (!resolvedProduct && clarifyCount < MAX_CLARIFY) {
+      const { reply } = await callAI('/generate-clarify', {
+        customer_message: lastCustomer.content || '',
+        identified_product: identifiedProduct || null,
+      });
+      await _sendAndSave({ session, reply, intent });
+      await chatDB.updateSessionIntelligence(sessionId, {
+        clarifyCount: clarifyCount + 1,
+      });
+      return { handled: 'clarify_sent', intent, clarifyCount: clarifyCount + 1 };
+    }
+
+    // Có sản phẩm, hoặc đã clarify đủ lần → reply với product search
+    const searchQuery = resolvedProduct?.query || resolvedProduct?.name || lastCustomer.content || '';
     const lastAttachment = lastCustomer.attachments?.find((a) => a.type === 'image');
 
     const { reply, product_images } = await callAI('/generate-reply', {
-      customer_message: lastCustomer.content || '',
-      page_id: session.pageId,
-      user_id: session.userId,
-      image_url: lastAttachment?.url || null,
-      top_k: 3,
+      customer_message: searchQuery,
+      page_id:          session.pageId,
+      user_id:          session.userId,
+      image_url:        lastAttachment?.url || null,
+      top_k:            3,
+      mood:             mood || 'neutral',
+      reply_style:      aiSettings?.replyStyle || null,
+      customer_name:    session.customerName || null,
+      identified_product: resolvedProduct,
     });
 
-    // Gửi ảnh sản phẩm đầu tiên kèm nội dung reply, hoặc chỉ text nếu không có ảnh
     const firstImage = product_images?.[0];
     if (firstImage) {
       await sendFbImageWithCaption(session.pageId, session.customerPsid, firstImage, reply);
@@ -151,13 +167,11 @@ const processChatJob = async (job) => {
   }
 
   if (intent === 'Đang Chốt') {
-    // Trích xuất thông tin đơn hàng từ hội thoại
     const { customer_name, phone, address, complete } = await callAI('/extract-order', {
       messages: historyForClassify,
     });
 
     if (!complete) {
-      // Thiếu thông tin → hỏi thêm
       const missing = [
         !customer_name && 'tên',
         !phone && 'số điện thoại',
@@ -165,12 +179,11 @@ const processChatJob = async (job) => {
       ].filter(Boolean).join(', ');
 
       const reply = `Dạ để em giao hàng anh/chị cho biết thêm ${missing} với ạ!`;
-      await _sendAndSave({ session, reply });
+      await _sendAndSave({ session, reply, intent });
       return { handled: 'ask_missing_info', intent, missing };
     }
 
-    // Đủ thông tin → lấy sản phẩm từ hội thoại rồi tạo confirmation
-    const productName = await _extractProductFromHistory(historyForClassify);
+    const productName = resolvedProduct?.name || (await _extractProductFromHistory(historyForClassify));
 
     const { reply: confirmReply } = await callAI('/generate-confirmation', {
       product_name:   productName,
@@ -179,7 +192,8 @@ const processChatJob = async (job) => {
       address,
     });
 
-    // Lưu tin nhắn xác nhận, đánh dấu is_confirmation_summary
+    await sendFbMessage(session.pageId, session.customerPsid, confirmReply);
+
     const confirmMsg = await chatDB.saveMessage({
       sessionId,
       senderType:            'ai',
@@ -187,12 +201,9 @@ const processChatJob = async (job) => {
       intentAtTime:          intent,
       isConfirmationSummary: true,
     });
-
-    await sendFbMessage(session.pageId, session.customerPsid, confirmReply);
     await chatDB.incrementTurnCount(sessionId);
     await chatDB.touchSession(sessionId);
 
-    // Lưu draft đơn hàng (PENDING_REVIEW)
     const existing = await chatDB.getOrderBySession(sessionId);
     if (!existing) {
       await chatDB.createOrder({
@@ -209,14 +220,13 @@ const processChatJob = async (job) => {
   }
 
   if (intent === 'Đã Xác Nhận') {
-    // Khách vừa xác nhận → đánh dấu tin nhắn + update đơn hàng
     const lastMsg = messages[messages.length - 1];
     if (lastMsg?.senderType === 'customer') {
       await chatDB.markCustomerConfirmed(sessionId, lastMsg.id);
     }
 
     const reply = 'Dạ em đã ghi nhận đơn của anh/chị! Bộ phận giao hàng sẽ liên hệ xác nhận ạ 🎉';
-    await _sendAndSave({ session, reply });
+    await _sendAndSave({ session, reply, intent });
     await chatDB.updateSessionIntent(sessionId, 'Đã Chốt');
     return { handled: 'order_confirmed', intent };
   }
@@ -226,20 +236,19 @@ const processChatJob = async (job) => {
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-const _sendAndSave = async ({ session, reply }) => {
-  await chatDB.saveMessage({
-    sessionId:   session.id,
-    senderType:  'ai',
-    content:     reply,
-    intentAtTime: session.intent,
-  });
+const _sendAndSave = async ({ session, reply, intent }) => {
   await sendFbMessage(session.pageId, session.customerPsid, reply);
+  await chatDB.saveMessage({
+    sessionId:    session.id,
+    senderType:   'ai',
+    content:      reply,
+    intentAtTime: intent || session.intent,
+  });
   await chatDB.incrementTurnCount(session.id);
   await chatDB.touchSession(session.id);
 };
 
 const _extractProductFromHistory = async (messages) => {
-  // Heuristic: lấy tên sản phẩm từ tin nhắn AI đầu tiên đề cập
   for (const m of messages) {
     if (m.role === 'ai' && m.content) {
       const match = m.content.match(/SP\d?:\s*([^\n—]+)/);
