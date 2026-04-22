@@ -457,9 +457,10 @@ Ví dụ: "Anh/chị đang tìm sản phẩm gì vậy ạ?"
 - [ ] AI Mode activation: khi user bật lại AI → trigger job cho tin nhắn chưa trả lời
 
 ### Phase 3 — Product Search & Reply (1-2h)
-- [ ] `chatProductSearch.js` — wrap Qdrant search (text + image) cho chat context
-- [ ] `replyGenerator.js` — Groq generate reply ngắn + confirmation summary
-- [ ] Facebook Send API integration (reuse page_tokens từ bảng `page_tokens`)
+- [x] `utils/fbSendApi.js` — sendFbMessage, sendFbImage, sendFbImageWithCaption (reuse page_tokens)
+- [x] Product search + reply: chatWorker gọi trực tiếp AI service `/chat/generate-reply` (text + image search trong Qdrant)
+- [x] Gửi ảnh sản phẩm + caption reply qua FB Send API khi có image results
+- [x] `chatProductSearch.js` / `replyGenerator.js` không cần — AI service đã xử lý tất cả
 
 ### Phase 4 — Chat UI (3-4h)
 - [ ] `ChatPage.jsx` — layout 3 cột

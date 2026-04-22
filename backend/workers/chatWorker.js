@@ -18,7 +18,7 @@ const axios = require('axios');
 const { Worker } = require('bullmq');
 const { getRedisConnection } = require('../queues/redisConnection');
 const chatDB = require('../db/chatDB');
-const { sendFbMessage } = require('../routes/chat');
+const { sendFbMessage, sendFbImageWithCaption } = require('../utils/fbSendApi');
 
 const AI_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
 
@@ -125,7 +125,7 @@ const processChatJob = async (job) => {
     // Tìm ảnh từ attachment cuối của khách (nếu có)
     const lastAttachment = lastCustomer.attachments?.find((a) => a.type === 'image');
 
-    const { reply, products } = await callAI('/generate-reply', {
+    const { reply, product_images } = await callAI('/generate-reply', {
       customer_message: lastCustomer.content || '',
       page_id: session.pageId,
       user_id: session.userId,
@@ -133,8 +133,21 @@ const processChatJob = async (job) => {
       top_k: 3,
     });
 
-    await _sendAndSave({ session, reply });
-    return { handled: 'reply_sent', intent, productCount: products?.length || 0 };
+    // Gửi ảnh sản phẩm đầu tiên kèm nội dung reply, hoặc chỉ text nếu không có ảnh
+    const firstImage = product_images?.[0];
+    if (firstImage) {
+      await sendFbImageWithCaption(session.pageId, session.customerPsid, firstImage, reply);
+    } else {
+      await sendFbMessage(session.pageId, session.customerPsid, reply);
+    }
+
+    await chatDB.saveMessage({
+      sessionId: session.id, senderType: 'ai', content: reply, intentAtTime: intent,
+    });
+    await chatDB.incrementTurnCount(session.id);
+    await chatDB.touchSession(session.id);
+
+    return { handled: 'reply_sent', intent, hasImage: !!firstImage };
   }
 
   if (intent === 'Đang Chốt') {

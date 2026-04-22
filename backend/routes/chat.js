@@ -22,6 +22,7 @@
 const express = require('express');
 const chatDB = require('../db/chatDB');
 const { addChatJob } = require('../queues/chatQueue');
+const { sendFbMessage } = require('../utils/fbSendApi');
 
 // =============================================
 // Webhook Router (không cần auth)
@@ -342,37 +343,4 @@ apiRouter.put('/settings/:pageId', async (req, res) => {
 });
 
 
-// =============================================
-// Helper: gửi tin nhắn qua Facebook Send API
-// =============================================
-const sendFbMessage = async (pageId, recipientPsid, text) => {
-  const { pool } = require('../db/migrate');
-  const { rows } = await pool.query(
-    'SELECT page_access_token FROM page_tokens WHERE page_id = $1',
-    [pageId]
-  );
-  if (!rows[0]) throw new Error(`No page token for page ${pageId}`);
-
-  const token = rows[0].page_access_token;
-  const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
-
-  const resp = await fetch(
-    `https://graph.facebook.com/v19.0/me/messages?access_token=${token}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        recipient: { id: recipientPsid },
-        message:   { text },
-      }),
-    }
-  );
-
-  if (!resp.ok) {
-    const err = await resp.json();
-    throw new Error(`FB Send API error: ${JSON.stringify(err)}`);
-  }
-  return resp.json();
-};
-
-module.exports = { webhookRouter, apiRouter, sendFbMessage };
+module.exports = { webhookRouter, apiRouter };
