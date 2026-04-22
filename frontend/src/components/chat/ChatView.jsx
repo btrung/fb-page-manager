@@ -33,7 +33,7 @@ const Bubble = ({ msg }) => {
 
 const ChatView = ({ session, messages, onAiModeToggle, onMessageSent }) => {
   const [text, setText] = useState('');
-  const [sending, setSending] = useState('');
+  const [sending, setSending] = useState(false);
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -45,11 +45,15 @@ const ChatView = ({ session, messages, onAiModeToggle, onMessageSent }) => {
     if (!content || sending) return;
     setSending(true);
     try {
+      // Human override: auto-switch to HUMAN mode before sending
+      if (session.aiMode === 'AI') {
+        await onAiModeToggle('HUMAN');
+      }
       await chatApi.sendMessage(session.id, content);
       setText('');
       onMessageSent?.();
     } catch {
-      // error visible to user via no-response
+      // silent
     } finally {
       setSending(false);
     }
@@ -104,29 +108,29 @@ const ChatView = ({ session, messages, onAiModeToggle, onMessageSent }) => {
 
       {/* Input */}
       <div className="bg-white border-t border-gray-200 px-4 py-3 shrink-0">
-        {!isHuman ? (
-          <div className="text-center text-xs text-gray-400 py-1">
-            AI đang tự vấn — bấm <strong>AI Hoạt Động</strong> để chuyển sang tư vấn thủ công
-          </div>
-        ) : (
-          <div className="flex items-end gap-2">
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Nhập tin nhắn... (Enter để gửi)"
-              rows={2}
-              className="flex-1 resize-none border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-facebook-blue"
-            />
-            <button
-              onClick={handleSend}
-              disabled={!text.trim() || !!sending}
-              className="bg-facebook-blue text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-facebook-dark disabled:opacity-40 transition-colors shrink-0"
-            >
-              Gửi
-            </button>
+        {!isHuman && (
+          <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-2 flex items-center gap-1.5">
+            <span>🤖</span>
+            <span>AI đang tự vấn. Gõ tin nhắn sẽ tự chuyển sang chế độ Người Tư Vấn.</span>
           </div>
         )}
+        <div className="flex items-end gap-2">
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Nhập tin nhắn... (Enter để gửi)"
+            rows={2}
+            className="flex-1 resize-none border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-facebook-blue"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!text.trim() || sending}
+            className="bg-facebook-blue text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-facebook-dark disabled:opacity-40 transition-colors shrink-0"
+          >
+            {sending ? '...' : 'Gửi'}
+          </button>
+        </div>
       </div>
     </div>
   );

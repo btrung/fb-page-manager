@@ -1,6 +1,7 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { ChatBadgeProvider } from './context/ChatBadgeContext';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import PostsPage from './pages/PostsPage';
@@ -80,7 +81,9 @@ const AppRoutes = () => (
 
 const App = () => (
   <AuthProvider>
-    <AppRoutes />
+    <ChatBadgeProvider>
+      <AppRoutes />
+    </ChatBadgeProvider>
   </AuthProvider>
 );
 

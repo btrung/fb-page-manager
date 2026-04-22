@@ -1,17 +1,19 @@
 import React from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-
-const NAV_TABS = [
-  { label: '🧠 AI Học',    to: '/dashboard' },
-  { label: '💬 Hội Thoại', to: '/chat' },
-  { label: '⚙️ Cài đặt',   to: '/settings' },
-];
+import { useChatBadge } from '../context/ChatBadgeContext';
 
 const Navbar = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const { dungCount } = useChatBadge();
+
+  const NAV_TABS = [
+    { label: '🧠 AI Học',    to: '/dashboard', badge: 0 },
+    { label: '💬 Hội Thoại', to: '/chat',       badge: dungCount },
+    { label: '⚙️ Cài đặt',   to: '/settings',   badge: 0 },
+  ];
 
   const handleLogout = async () => {
     await logout();
@@ -38,13 +40,18 @@ const Navbar = () => {
                 <Link
                   key={tab.to}
                   to={tab.to}
-                  className={`text-sm px-3 py-1.5 rounded-lg font-medium transition-colors ${
+                  className={`relative text-sm px-3 py-1.5 rounded-lg font-medium transition-colors ${
                     activeTab(tab.to)
                       ? 'bg-white/20 text-white'
                       : 'text-white/70 hover:text-white hover:bg-white/10'
                   }`}
                 >
                   {tab.label}
+                  {tab.badge > 0 && (
+                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 leading-none">
+                      {tab.badge > 99 ? '99+' : tab.badge}
+                    </span>
+                  )}
                 </Link>
               ))}
             </div>

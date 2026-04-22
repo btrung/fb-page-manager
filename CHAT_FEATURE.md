@@ -475,10 +475,10 @@ Ví dụ: "Anh/chị đang tìm sản phẩm gì vậy ạ?"
 - [x] Route `/settings` + Navbar tab ⚙️ Cài đặt
 
 ### Phase 6 — Polish & Edge Cases (1h)
-- [ ] Alert khi có `Dừng` mới (notification badge)
-- [ ] Human override: người dùng tự gõ → AI không ghi đè
-- [ ] Ngoài khung giờ: webhook vẫn nhận, lưu DB, nhưng chatWorker skip reply
-- [ ] Test end-to-end với real Messenger
+- [x] Notification badge đỏ trên tab 💬 Hội Thoại — đếm session `Dừng`, poll 15s
+- [x] Human override: gõ tin nhắn khi AI mode → auto-switch sang HUMAN trước khi gửi + hint text
+- [x] Ngoài khung giờ: chatWorker đã có `isWithinActiveHours` check (Phase 2)
+- [ ] Test end-to-end với real Messenger (cần môi trường thật)
 
 ---
 
