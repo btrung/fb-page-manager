@@ -16,7 +16,6 @@ const _getPageToken = async (pageId) => {
 };
 
 const _fbPost = async (token, body) => {
-  const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
   const resp = await fetch(
     `https://graph.facebook.com/${FB_API_VERSION}/me/messages?access_token=${token}`,
     {

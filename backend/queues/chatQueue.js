@@ -27,18 +27,12 @@ const getChatQueue = () => {
   return _chatQueue;
 };
 
-/**
- * Thêm job xử lý tin nhắn mới vào queue.
- * Dùng jobId cố định theo sessionId để tránh queue chồng chất
- * nếu khách nhắn nhiều tin liên tiếp (BullMQ dedup theo jobId).
- */
 const addChatJob = async ({ sessionId, pageId, userId }) => {
   const queue = getChatQueue();
-  // delay 500ms: gom tin nhắn liên tiếp trong cùng 1 job
   const job = await queue.add(
     'process-message',
     { sessionId, pageId, userId },
-    { jobId: `chat:${sessionId}`, delay: 500 },
+    { delay: 2000 },
   );
   return { jobId: job.id };
 };

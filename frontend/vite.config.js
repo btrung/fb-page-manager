@@ -19,6 +19,16 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/webhook': {
+        target: BACKEND_URL,
+        changeOrigin: true,
+        secure: false,
+      },
+      '/sync': {
+        target: BACKEND_URL,
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 });

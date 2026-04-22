@@ -14,6 +14,8 @@ const SCOPES = [
   'email',
   'pages_show_list',       // Xem danh sách pages user quản lý
   'pages_read_engagement', // Đọc posts, likes, comments của page
+  'pages_messaging',       // Gửi/nhận tin nhắn Messenger qua API
+  'pages_manage_metadata', // Subscribe page webhook + quản lý metadata
 ].join(',');
 
 // =============================================
