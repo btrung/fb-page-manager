@@ -1,24 +1,5 @@
 # FB Page Manager - Post Intelligence Service
 
----
-
-## ⚠️ QUYẾT ĐỊNH KIẾN TRÚC LỚN
-
-### Bỏ Product Layer (product_from_posts)
-
-**Quyết định:** Không còn bảng `product_from_posts`, `post_products`, `product_media_vectors` trong luồng xử lý chính.
-
-**Lý do:** `product_from_posts` chỉ là sản phẩm _dự đoán_ từ bài viết, không phải sản phẩm thực tế. Việc dedup theo tên sản phẩm không đáng tin cậy (cùng tên nhưng khác sản phẩm). Thay vào đó, dùng thẳng `posts` + Qdrant làm nguồn dữ liệu cho mọi truy vấn.
-
-**Hệ quả:**
-- Nguồn dữ liệu duy nhất: bảng `posts` (PostgreSQL) + `post_embeddings` / `product_images` (Qdrant)
-- Không còn route `GET /api/intelligence/products`
-- Không còn tab Sản phẩm trên frontend
-- Qdrant `product_images` vẫn lưu `product_name` từ LLM extraction (không có `product_id`)
-- Các bảng cũ (`product_from_posts`, `post_products`, `product_media_vectors`) giữ nguyên trong DB nhưng không ghi vào nữa
-
----
-
 ## 📋 CONTEXT HIỆN TẠI
 
 - ✅ Docker đã setup
@@ -34,15 +15,15 @@
 
 👉 fb-page-manager
 
-Dịch vụ này là một ✅Product intelligence graph từ social data Facebook để AI Chat để nắm được sản phẩm & promotion từ posts để tư vấn, mà chưa cần có product thực tế từ website user.
-Không làm AI chat, chỉ tập trung làm Product intelligence graph từ social data
+Dịch vụ này là một ✅Post intelligence graph từ social data Facebook để AI Chat để nắm được sản phẩm & promotion từ posts để tư vấn, mà chưa cần có product thực tế từ website user.
+Không làm AI chat, chỉ tập trung làm Post intelligence graph từ social data
 
 -----------------------
 GIẢI THÍCH ĐƠN GIẢN HOÁ TÁC VỤ
 
 1. graph 500 posts từ fanpage
-2. có llm tạo các trường cho products, chương trình ưu đãi từ posts
-3. embedding những trường quan trọng phục vụ cho AI Chat về sau
+2. có llm tạo các trường về products, chương trình ưu đãi từ posts
+3. embedding cho post_embeddings & product_images phục vụ cho AI Chat về sau
 4. trữ vào db, để sau AI về sau sẽ truy vấn và tư vấn có cở sở nhất
 
 -------------------
@@ -71,8 +52,6 @@ what_is_promotion string)
 - AI phát hiện posts có phải là post bán hàng (is_sale_post) không -> No -> K lưu DB
 - định dạng video -> k lưu db
 - post mà có hơn 5 hình ảnh -> skip, k xử lí
-- (update price mới) | extracted_product_name đã có trong Bảng product_from_posts, nếu có price từ post và post_created_time_on_FB mới nhất so với product_from_posts, thì update price mới đó vào -> lưu price mới vào product_from_posts
-
 
 
 4. embedding cho ảnh (chỉ với posts pass LLM), để khách hàng truy vấn AI sẽ tìm cho dễ
@@ -88,7 +67,9 @@ Push vào vector DB (Qdrant)
 Xoá khỏi RAM
 -> lưu trữ vào các db cần các trường image_embedding
 
-5. lưu các trường vào các db Posts, post_media, product_from_posts, post_products product_media_vectors
+5. embedding content của posts: để phục vụ query user sau này
+
+5. lưu các trường vào các db Posts, post_media
 
 6. Đảm bảo hệ thống an toàn khi gặp sự cố, có thể khôi phục và không có dữ liệu trùng lặp
 7. Hỗ trợ nhiều người dùng và nhiều trang Facebook
@@ -151,57 +132,6 @@ Ràng buộc:
 - UNIQUE(media_id)
 
 
-
-------------------------------
-
-## 3. Bảng product_from_posts
-
-product_id
-user_id
-product_name
-normalized_name
-what_is_product
-what_is_promotion
-name_confidence
-first_post_id
-first_page_id
-mention_count
-current_price
-image_url (ảnh đại diện sản phẩm — lấy từ ảnh đầu tiên của post phát hiện SP; không ghi đè nếu đã có)
-status
-first_seen_at
-last_seen_at
-created_at
-
-------------------------------
-
-## 4 post_products 
-
-id
-post_id
-page_id
-product_id
-extracted_product_name
-confidence
-is_primary
-product_count
-created_at
-
-------------------------------
-
-## 5 product_media_vectors 
-id
-product_id
-product_name
-post_id
-page_id
-image_url
-image_embedding
-product_reference_embedding
-similarity_score
-is_primary
-created_at
-
 ---------------------------------
 
 ## 6. Bảng crawl_logs
@@ -255,17 +185,21 @@ AI service là Python backend
 
 ## Giai đoạn 2: Lọc
 - có điều kiện lọc skip những post không cần thiết
-
+- rồi lưu trường quan trọng vào db Posts
 
 ## Giai đoạn 3: Xử lý phương tiện
 - Trích xuất URL hình ảnh
 - Lưu vào post_media (chưa nhúng)
 
-## Giai đoạn 4: Xử lý nhúng
-- Tải hình ảnh tạm thời (chỉ luồng)
+## Giai đoạn 4: Xử lý nhúng (Post_embeddings & product_images )
+- Post_embeddings -> embedding content của bài posts + metadata (page_id, user_id, product_name, price, post_created_time, post_id)
 
+- product_images -> embedding image + metadata ( page_id, user_id, product_name, post_created_time, post_id, image_url )
+
+về Hình Ảnh để Embed
+- Tải hình ảnh tạm thời (chỉ luồng)
 - Tạo nhúng CLIP
-- Lưu trữ nhúng trong DB hoặc Qdrant
+- Lưu trữ nhúng trong Qdrant
 - Xóa tệp tạm thời ngay lập tức
 
 ## Giai đoạn 5: Lưu vào DB các table
