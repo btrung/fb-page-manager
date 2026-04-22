@@ -61,4 +61,23 @@ export const intelligenceApi = {
     api.delete('/api/intelligence/data'),
 };
 
+export const chatApi = {
+  getSessions: (params) => api.get('/api/chat/sessions', { params }),
+  getMessages: (sessionId) => api.get(`/api/chat/sessions/${sessionId}/messages`),
+  sendMessage: (sessionId, content) =>
+    api.post(`/api/chat/sessions/${sessionId}/messages`, { content }),
+  setAiMode: (sessionId, aiMode) =>
+    api.post(`/api/chat/sessions/${sessionId}/ai-mode`, { aiMode }),
+  setIntent: (sessionId, intent) =>
+    api.post(`/api/chat/sessions/${sessionId}/intent`, { intent }),
+  addTag: (sessionId, tag) =>
+    api.post(`/api/chat/sessions/${sessionId}/tags`, { tag }),
+  removeTag: (sessionId, tag) =>
+    api.delete(`/api/chat/sessions/${sessionId}/tags/${encodeURIComponent(tag)}`),
+  updateOrder: (orderId, status) =>
+    api.put(`/api/chat/orders/${orderId}`, { status }),
+  getSettings: () => api.get('/api/chat/settings'),
+  updateSettings: (pageId, data) => api.put(`/api/chat/settings/${pageId}`, data),
+};
+
 export default api;
