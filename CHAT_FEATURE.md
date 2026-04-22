@@ -1,0 +1,487 @@
+# AI Chat Feature — FB Page Manager
+
+> **Mục tiêu:** Giao diện chat đơn giản hơn Pancake, tập trung vào 1 việc duy nhất: dùng AI chốt đơn nhanh với hot customer nhắn tin vào fanpage. Không spam token LLM vào cold customer.
+
+---
+
+## 🧠 Triết lý thiết kế
+
+| Pancake Chat (Ví dụ như Pancake nhưng đừng ghi trên Frontend) | Chat này |
+|---|---|
+| Đầy đủ tính năng CRM | Chỉ tập trung chốt đơn |
+| AI optional | AI là trung tâm |
+| Quản lý nhiều kênh | Chỉ FB Messenger |
+| Tag thủ công | Tag tự động theo intent |
+| Không có bộ lọc intent | Intent filter là cốt lõi |
+
+**Nguyên tắc:**
+- Customer nhắn vào fanpage = hot data → phải tận dụng
+- Không có intent mua → không tốn token, cooldown 5 tiếng
+- Đã xác định intent → truy vấn DB + Qdrant → reply ngắn, có ảnh, có hook
+- AI thử 1-2 lần không ăn → tag `HUMAN_NEEDED`, dừng lại, báo người dùng vào chốt
+- Kịch bản AI chỉ có 1: tìm sản phẩm → đưa nhanh → hỏi thông tin → chốt đơn
+
+---
+
+## 🔄 Kịch bản AI (Sales Script)
+
+```
+Khách nhắn tin
+    │
+    ▼
+[Intent Detection] ← phân tích toàn bộ session hiện tại
+    │
+    ├─ COLD / SPAM → thử probe 1 lần → nếu vẫn cold → COOLDOWN 5h
+    │                                                        (không reply nữa, chuyển qa HUMAN xử lí)
+    │
+    ├─ BUYING / CONSULTING ──────────────────────────────────────────┐
+    │                                                                 │
+    ▼                                                                 ▼
+[Tìm sản phẩm]                                              [Khách đưa tên/ảnh SP]
+Qdrant semantic search                                      → tìm ngay, skip probe
+(text: post_embeddings / ảnh: product_images)
+    │
+    ▼
+[Reply lần 1: Giới thiệu SP]
+- Text ngắn (≤3 dòng) + ảnh sản phẩm
+- Giá + chương trình hiện tại
+- Hook: "Anh/chị muốn đặt không ạ?"
+    │
+    ├─ Khách hỏi thêm → tiếp tục tư vấn (tối đa 3 turns)
+    │
+    ├─ Khách đồng ý → hỏi: Tên + SĐT + Địa chỉ → tag CLOSING
+    │
+    └─ Khách im lặng / không quan tâm sau 2 lần → tag HUMAN_NEEDED → dừng AI
+```
+
+---
+
+## 🏷️ Hệ thống Tag & Điều khiển AI
+
+### 1. Intent Tag — AI tự xác định, người dùng có thể override
+
+Mục đích: **báo cho user biết AI đang đánh giá vị khách này như thế nào.** User có thể tự tay đổi intent để điều hướng hành vi AI (ví dụ: đổi `Khách Đùa` → `Muốn Mua` để AI bắt đầu tư vấn ngay).
+
+| Intent | Màu | Ý nghĩa | Hành động AI |
+|---|---|---|---|
+| `Muốn Mua` | 🟢 Xanh | Muốn mua, hỏi giá, đặt hàng | Reply ngay, tìm SP |
+| `Đang Tư Vấn` | 🔵 Xanh dương | Hỏi thông tin SP, so sánh | Tư vấn, dẫn dắt |
+| `Khách Đùa` | ⚪ Xám | Hỏi linh tinh, không rõ ý | Probe 1 lần |
+| `Không Nhu Cầu` | 🔴 Đỏ | Đã xác nhận không có nhu cầu | Không reply, dừng |
+| `Đang Chốt` | 🟡 Vàng | Đang lấy thông tin để chốt | Hỏi tên/SĐT/địa chỉ |
+| `Đã Chốt` | 🟣 Tím | Đã chốt xong | Lưu đơn, AI dừng |
+| `Dừng` | 🟠 Cam | AI bỏ cuộc, cần người vào | Alert người dùng |
+
+### 2. AI Mode Tag — song song với Intent, dùng để điều khiển AI
+
+Mỗi conversation luôn có **1 trong 2 trạng thái** này, hiển thị rõ trên UI:
+
+| Mode | Ý nghĩa | Ai set |
+|---|---|---|
+| `🤖 AI Hoạt Động` | AI đang tự động tư vấn | Mặc định nếu fanpage được cấp quyền AI |
+| `👤 Người Tư Vấn` | AI tạm dừng, người dùng tự chat | User toggle thủ công, hoặc khi AI tự set `Dừng` |
+
+**Quy tắc điều khiển:**
+- User toggle `AI Hoạt Động` → `Người Tư Vấn`: AI dừng ngay, không reply dù có tin nhắn mới
+- User toggle `Người Tư Vấn` → `AI Hoạt Động`: AI kiểm tra ngay nếu có tin nhắn chưa trả lời → xử lý luôn, không cần đợi khách nhắn thêm
+- Khi AI tự set `Dừng` (hết turn): tự động chuyển sang `Người Tư Vấn` + alert user
+
+### 3. Tags thủ công — người dùng tự tạo, tự gắn, AI không đụng vào
+
+Người dùng tự quản lý hoàn toàn trên UI. Có 2 mẫu gợi ý sẵn:
+
+- `đã chốt` — đơn đã xác nhận
+- `saler chị Hai` — conversation này giao cho chị Hai tự chat với khách
+- `sắp gửi hàng` — user duyệt mess này AI chốt đúng, và sắp gửi hàng
+
+---
+
+## 🗄️ Database Schema (thêm mới)
+
+### Bảng `chat_sessions`
+```sql
+id              UUID PRIMARY KEY
+page_id         VARCHAR
+user_id         UUID FK users
+customer_psid   VARCHAR         -- FB Page-Scoped ID của khách
+customer_name   VARCHAR
+customer_avatar VARCHAR
+intent          VARCHAR         -- Muốn Mua | Đang Tư Vấn | Khách Đùa | Không Nhu Cầu | Đang Chốt | Đã Chốt | Dừng
+intent_updated_at TIMESTAMP
+ai_mode         VARCHAR DEFAULT 'AI'  -- 'AI' = AI Hoạt Động | 'HUMAN' = Người Tư Vấn
+cooldown_until  TIMESTAMP       -- null nếu không trong cooldown
+ai_turn_count   INT DEFAULT 0   -- số lần AI đã reply trong session này
+last_message_at TIMESTAMP
+created_at      TIMESTAMP
+```
+
+### Bảng `chat_messages`
+```sql
+id                      UUID PRIMARY KEY
+session_id              UUID FK chat_sessions
+sender_type             VARCHAR         -- 'customer' | 'ai' | 'human'
+content                 TEXT
+attachments             JSONB           -- [{type: 'image', url: '...'}]
+intent_at_time          VARCHAR         -- intent tại thời điểm gửi
+is_confirmation_summary BOOLEAN DEFAULT false  -- tin AI tổng kết đơn hàng hỏi xác nhận
+is_customer_confirmed   BOOLEAN DEFAULT false  -- tin khách reply ok/xác nhận cuối cùng
+fb_message_id           VARCHAR UNIQUE
+created_at              TIMESTAMP
+```
+
+### Bảng `session_tags`
+```sql
+id          UUID PRIMARY KEY
+session_id  UUID FK chat_sessions
+tag         VARCHAR
+created_at  TIMESTAMP
+UNIQUE(session_id, tag)
+```
+
+### Bảng `ai_page_settings` (cấu hình AI per fanpage)
+```sql
+id              UUID PRIMARY KEY
+user_id         UUID FK users
+page_id         VARCHAR
+ai_enabled      BOOLEAN DEFAULT false   -- bật/tắt AI cho toàn bộ fanpage này
+active_hours    JSONB                   -- null = 24/7, có giá trị = giới hạn khung giờ
+                                        -- vd: {"start": "08:00", "end": "22:00", "timezone": "Asia/Ho_Chi_Minh"}
+created_at      TIMESTAMP
+updated_at      TIMESTAMP
+UNIQUE(user_id, page_id)
+```
+
+### Bảng `chat_orders` (đơn giản, lưu khi chốt)
+```sql
+id                              UUID PRIMARY KEY
+session_id                      UUID FK chat_sessions
+customer_name                   VARCHAR
+phone                           VARCHAR
+address                         TEXT
+product_name                    VARCHAR
+note                            TEXT
+status                          VARCHAR DEFAULT 'PENDING_REVIEW'  -- PENDING_REVIEW | CONFIRMED | CANCELLED
+confirmation_summary_msg_id     UUID FK chat_messages  -- tin AI hỏi xác nhận
+customer_confirmed_msg_id       UUID FK chat_messages  -- tin khách reply ok
+customer_confirmed_at           TIMESTAMP              -- thời điểm khách xác nhận
+created_at                      TIMESTAMP
+```
+
+---
+
+## ⚙️ Luồng kỹ thuật
+
+### 1. Nhận tin nhắn (Webhook)
+```
+Facebook Messenger Webhook → POST /api/chat/webhook
+→ Verify token khi setup
+→ Mỗi message event:
+   1. Tìm/tạo chat_session theo customer_psid + page_id
+   2. Lưu message vào chat_messages
+   3. Đẩy vào queue: chatQueue (BullMQ)
+```
+
+### 2. Chat Worker (BullMQ)
+```
+chatQueue job:
+1. Load session + lịch sử 10 tin nhắn gần nhất
+2. Kiểm tra ai_page_settings:
+   - ai_enabled = false → skip toàn bộ fanpage
+   - active_hours có giá trị → kiểm tra giờ hiện tại (timezone) → ngoài khung giờ thì skip
+3. Kiểm tra session.ai_mode:
+   - ai_mode = 'HUMAN' → skip (người tư vấn đang cầm)
+4. Kiểm tra cooldown (intent = Không Nhu Cầu + cooldown_until chưa hết) → skip
+5. Gọi Intent Classifier (Groq) với context session
+6. Update intent vào DB
+7. Nếu intent = Muốn Mua / Đang Tư Vấn:
+   a. Extract query từ tin nhắn (tên SP / mô tả)
+   b. Nếu có ảnh → Qdrant image search (product_images)
+   c. Nếu có text → Qdrant text search (post_embeddings)
+   d. Lấy top 3 kết quả
+   e. Gọi Reply Generator (Groq) → reply ngắn + ảnh SP
+   f. Gửi reply qua Facebook Send API
+   g. Tăng ai_turn_count
+8. Nếu intent = Khách Đùa:
+   a. ai_turn_count < 1 → probe 1 lần
+   b. ai_turn_count >= 1 → set Không Nhu Cầu + cooldown_until = dừng
+9. Nếu intent = Đang Chốt:
+   - Đã có đủ tên + SĐT + địa chỉ → gửi tin xác nhận tổng kết (is_confirmation_summary = true)
+   - Đánh dấu chờ khách confirm
+10. Nếu nhận được tin xác nhận từ khách (is_customer_confirmed = true):
+    - Tạo chat_order với status = PENDING_REVIEW
+    - Set intent = Đã Chốt, ai_mode = HUMAN
+    - Alert user
+11. Nếu ai_turn_count >= 5 → set intent = Dừng, ai_mode = HUMAN → alert user
+```
+
+### 2b. AI Mode Activation (khi user bật lại AI Hoạt Động)
+```
+Trigger: user toggle ai_mode → 'AI' cho 1 conversation
+→ Kiểm tra tin nhắn gần nhất của khách
+→ Nếu có tin nhắn chưa được AI trả lời → đẩy job vào chatQueue ngay
+→ Worker xử lý bình thường như tin nhắn mới
+```
+
+### 3. Gửi tin nhắn (Send API)
+```
+POST https://graph.facebook.com/v19.0/me/messages
+Authorization: Bearer {page_access_token}
+Body: { recipient: { id: psid }, message: { text, attachment } }
+```
+
+---
+
+## 🖥️ UI Layout (ChatPage.jsx)
+
+### Trạng thái thông thường (đang tư vấn)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Header: "AI Chat" | Page selector dropdown | AI On/Off global  │
+├──────────────────┬──────────────────────────┬───────────────────┤
+│ CONVERSATION     │ CHAT VIEW                │ CUSTOMER INFO     │
+│ LIST             │                          │                   │
+│                  │ [Customer Name]          │ Name: Nguyễn A    │
+│ 🔴 Nguyễn A     │ 🟢 Muốn Mua              │ PSID: xxx         │
+│ "cho hỏi giá..." │ ─────────────────        │                   │
+│ 2m ago           │ Khách: cho hỏi giá       │ Intent:           │
+│                  │ túi da màu đen           │ 🟢 Muốn Mua       │
+│ 🟠 Trần B       │                          │                   │
+│ "Cần Hỗ Trợ"    │ AI: Dạ, bên em có        │ Tags:             │
+│ 5m ago           │ [ảnh túi] Túi Da Thật    │ [hot] [new]  [+]  │
+│                  │ chỉ 850k, đang có KM     │                   │
+│ ⚪ Lê C         │ giảm thêm 10%...         │ AI Replies: 2/5   │
+│ "hôm nay có..."  │                          │                   │
+│ 10m ago          │ Khách: ok giá đó đc      │ [Tắt AI]          │
+│                  │ không                    │ [Gắn Tag]         │
+│ [Search...]      │                          │ [Xem Đơn]         │
+│ [Filter intent]  │ [Type message...]  [Send]│                   │
+└──────────────────┴──────────────────────────┴───────────────────┘
+```
+
+### Panel phải — 2 tab chuyển qua lại
+
+Panel bên phải luôn có **2 tab nhỏ ở trên**. Tab nào đang active thì gạch dưới:
+
+```
+┌───────────────────────────────────┐
+│  [👤 Thông tin khách] [🟣 Đã Chốt]│
+├───────────────────────────────────┤
+│  ... nội dung tab đang chọn ...   │
+└───────────────────────────────────┘
+```
+
+**Quy tắc tab mặc định khi click vào conversation:**
+- Session chưa có `AI_CLOSED` → mở tab **Thông tin khách** sẵn
+- Session có `AI_CLOSED` → mở tab **Đã Chốt** sẵn (user thấy bằng chứng ngay), vẫn có thể nhấn sang Thông tin khách bất cứ lúc nào
+
+---
+
+#### Tab 1: Thông tin khách
+```
+┌───────────────────────────────────┐
+│  [👤 Thông tin khách] [🟣 Đã Chốt]│  ← tab này đang active (gạch dưới)
+├───────────────────────────────────┤
+│  Name: Nguyễn A                   │
+│  PSID: xxx                        │
+│                                   │
+│  Intent:  🟢 Muốn Mua  [Đổi]     │
+│  AI Mode: 🤖 AI Hoạt Động  [Đổi] │
+│                                   │
+│  Tags:                            │
+│  [đã chốt] [saler chị Hai]  [+]  │
+│                                   │
+│  AI Replies: 2/5                  │
+│                                   │
+│  [Gắn Tag]                        │
+└───────────────────────────────────┘
+```
+
+#### Tab 2: Đã Chốt (tab này chỉ hiện khi session có `AI_CLOSED`)
+```
+┌───────────────────────────────────┐
+│  [👤 Thông tin khách] [🟣 Đã Chốt]│  ← tab này đang active (gạch dưới)
+├───────────────────────────────────┤
+│  🟣 AI ĐÃ CHỐT ĐƠN                │
+│  Chốt lúc: 14:32 — 22/04/2026    │
+├───────────────────────────────────┤
+│  📋 THÔNG TIN ĐƠN                 │
+│  ─────────────────                │
+│  👤 Tên:  Nguyễn Văn A            │
+│  📞 SĐT:  0912 345 678            │
+│  📍 Địa:  123 Lê Lợi, Q1, HCM    │
+│  📦 SP:   Túi Da Đen size M       │
+│  💰 Giá:  850.000đ (KM -10%)      │
+├───────────────────────────────────┤
+│  ✅ BẰNG CHỨNG XÁC NHẬN           │
+│  ─────────────────                │
+│  ┌─────────────────────────────┐  │
+│  │ 🤖 AI — 14:30:12            │  │  ← nền xanh nhạt
+│  │ "Dạ em xác nhận lại đơn ạ: │  │
+│  │  📦 Túi Da Đen size M       │  │
+│  │  💰 850k (KM -10%)          │  │
+│  │  👤 Nguyễn Văn A            │  │
+│  │  📞 0912 345 678            │  │
+│  │  📍 123 Lê Lợi, Q1, HCM    │  │
+│  │  Anh xác nhận đặt nhé ạ?✅" │  │
+│  └─────────────────────────────┘  │
+│                                   │
+│  ┌─────────────────────────────┐  │
+│  │ 👤 Khách — 14:31:47         │  │  ← nền xanh đậm + border nổi
+│  │ "ok bạn ơi"                 │  │  ← bằng chứng chốt
+│  └─────────────────────────────┘  │
+│  ⏱ Khách xác nhận: 14:31:47      │  ← timestamp HH:mm:ss DD/MM/YYYY
+├───────────────────────────────────┤
+│  [✅ Xác nhận gửi hàng]           │
+│  [✏️ Sửa thông tin]              │
+│  [❌ Huỷ đơn]  [📋 Copy đơn]     │
+└───────────────────────────────────┘
+```
+
+**Nguyên tắc tab Đã Chốt:**
+- Tin AI tổng kết (`is_confirmation_summary = true`): nền xanh nhạt
+- Tin khách xác nhận (`is_customer_confirmed = true`): nền xanh đậm + border nổi bật
+- Timestamp đầy đủ `HH:mm:ss — DD/MM/YYYY` (không dùng "2 phút trước")
+- Nội dung tab **bất biến** — snapshot tại thời điểm chốt, không thay đổi dù có tin nhắn mới
+
+**Features UI:**
+- Sort conversations: Cần Hỗ Trợ lên đầu, sau đó Muốn Mua/Đang Tư Vấn, rồi Khách Đùa
+- Filter theo intent + filter riêng `Đã Chốt chờ duyệt`
+- Badge đếm: bao nhiêu hội thoại đang cần người vào / bao nhiêu đơn chờ duyệt
+- Toggle AI on/off per conversation
+- Gõ tin nhắn thủ công (human override)
+- Real-time update qua SSE hoặc polling 3s
+
+---
+
+## ⚙️ Settings Page (ChatSettingsPage.jsx)
+
+Trang riêng để user cấu hình AI per fanpage. Truy cập từ menu hoặc nút Settings trên ChatPage.
+
+```
+┌──────────────────────────────────────────────────┐
+│  ⚙️ Cài đặt AI Chat                             │
+├──────────────────────────────────────────────────┤
+│  FANPAGE CỦA BẠN                                 │
+│  ─────────────────────────────────────────────   │
+│  📄 Fanpage A                                    │
+│     AI Chat:  [🟢 Đang bật]  ← toggle           │
+│     Khung giờ: 08:00 – 22:00  [Sửa]             │
+│                                                  │
+│  📄 Fanpage B                                    │
+│     AI Chat:  [⚪ Đang tắt]  ← toggle           │
+│     Khung giờ: Cả ngày (24/7)  [Sửa]            │
+│                                                  │
+│  📄 Fanpage C                                    │
+│     AI Chat:  [🟢 Đang bật]  ← toggle           │
+│     Khung giờ: 07:00 – 23:00  [Sửa]             │
+└──────────────────────────────────────────────────┘
+```
+
+**Quy tắc hoạt động:**
+- Bật AI cho fanpage → AI bắt đầu dò tất cả tin nhắn mới của fanpage đó
+- Tắt AI cho fanpage → toàn bộ conversation của fanpage đó chuyển `Người Tư Vấn`, AI không làm gì
+- Khung giờ: nếu set thì AI chỉ reply trong giờ đó (timezone Asia/Ho_Chi_Minh), ngoài giờ bỏ qua
+- Khung giờ = trống → AI hoạt động 24/7
+
+---
+
+## 📝 Prompt Templates
+
+### Intent Classifier Prompt
+```
+Bạn là AI phân loại ý định mua hàng. Dựa vào lịch sử hội thoại sau,
+xác định intent của khách hàng.
+
+Trả về JSON: { "intent": "BUYING|CONSULTING|COLD", "reason": "..." }
+
+Quy tắc:
+- BUYING: hỏi giá, muốn mua, đặt hàng, hỏi còn hàng không
+- CONSULTING: hỏi thông tin SP, so sánh, hỏi chất lượng
+- COLD: chào hỏi thông thường, không liên quan đến sản phẩm, spam
+
+Lịch sử hội thoại:
+{conversation_history}
+```
+
+### Reply Generator Prompt
+```
+Bạn là nhân viên tư vấn bán hàng. Trả lời NGẮN GỌN (tối đa 3 câu).
+
+Sản phẩm tìm được:
+{product_context}
+
+Tin nhắn khách: {customer_message}
+
+Quy tắc:
+- Giới thiệu SP với giá + khuyến mãi (nếu có)
+- Kết thúc bằng câu hook ngắn (hỏi có muốn đặt không)
+- KHÔNG dài dòng, KHÔNG giải thích nhiều
+- Nếu đang hỏi thông tin để chốt: chỉ hỏi Tên + SĐT + Địa chỉ
+```
+
+### Probe Prompt (khi COLD)
+```
+Khách vừa nhắn: {message}
+Hỏi 1 câu ngắn để tìm hiểu họ cần gì. Không quá 1 câu.
+Ví dụ: "Anh/chị đang tìm sản phẩm gì vậy ạ?"
+```
+
+---
+
+## 🛠️ Implementation Phases
+
+### Phase 1 — Database & Webhook (1-2h)
+- [ ] Migration: tạo bảng `ai_page_settings`, `chat_sessions`, `chat_messages`, `session_tags`, `chat_orders`
+- [ ] `POST /api/chat/webhook` — nhận FB Messenger events
+- [ ] `GET /api/chat/webhook` — verify webhook token
+- [ ] `chatDB.js` — CRUD functions cho tất cả bảng trên
+
+### Phase 2 — Chat Worker & Intent (2-3h)
+- [ ] `chatQueue.js` — BullMQ queue mới
+- [ ] `chatWorker.js` — worker xử lý logic chính (kiểm tra settings → ai_mode → cooldown → intent)
+- [ ] `intentService.js` — gọi Groq classify intent, trả về intent + reason
+- [ ] Cooldown logic theo `cooldown_until` trong DB
+- [ ] AI Mode activation: khi user bật lại AI → trigger job cho tin nhắn chưa trả lời
+
+### Phase 3 — Product Search & Reply (1-2h)
+- [ ] `chatProductSearch.js` — wrap Qdrant search (text + image) cho chat context
+- [ ] `replyGenerator.js` — Groq generate reply ngắn + confirmation summary
+- [ ] Facebook Send API integration (reuse page_tokens từ bảng `page_tokens`)
+
+### Phase 4 — Chat UI (3-4h)
+- [ ] `ChatPage.jsx` — layout 3 cột
+- [ ] `ConversationList.jsx` — list + filter intent + AI Mode badge + sort (Dừng lên đầu)
+- [ ] `ChatView.jsx` — tin nhắn + intent badge + AI Mode toggle per conversation
+- [ ] `CustomerPanel.jsx` — normal mode: info + tags + controls / CLOSED mode: Confirmation Evidence Panel
+- [ ] Real-time: SSE hoặc polling 3s
+
+### Phase 5 — Settings Page (1h)
+- [ ] `ChatSettingsPage.jsx` — bật/tắt AI per fanpage + cấu hình khung giờ
+- [ ] API: `GET/PUT /api/chat/settings/:pageId`
+
+### Phase 6 — Polish & Edge Cases (1h)
+- [ ] Alert khi có `Dừng` mới (notification badge)
+- [ ] Human override: người dùng tự gõ → AI không ghi đè
+- [ ] Ngoài khung giờ: webhook vẫn nhận, lưu DB, nhưng chatWorker skip reply
+- [ ] Test end-to-end với real Messenger
+
+---
+
+## 🚫 Không làm (scope out)
+
+- Không tích hợp Instagram / Zalo (chỉ FB Messenger)
+- Không có CRM đầy đủ (không quản lý khách hàng lâu dài)
+- Không có báo cáo / analytics
+- Không tự động assign agent
+- Không template tin nhắn thủ công (quick replies)
+- Không bot training / fine-tuning
+
+---
+
+## 🔑 Yêu cầu kỹ thuật
+
+- Facebook App cần permission: `pages_messaging`
+- Webhook phải verify với `VERIFY_TOKEN` cố định
+- Page Access Token đã có sẵn trong bảng `page_tokens`
+- Tất cả AI call dùng Groq (đã có `GROQ_API_KEY`)
+- Qdrant collections `post_embeddings` + `product_images` đã có sẵn
