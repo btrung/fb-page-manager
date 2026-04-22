@@ -21,6 +21,7 @@
  */
 const express = require('express');
 const chatDB = require('../db/chatDB');
+const { addChatJob } = require('../queues/chatQueue');
 
 // =============================================
 // Webhook Router (không cần auth)
@@ -84,8 +85,8 @@ webhookRouter.post('/', express.json(), async (req, res) => {
           intentAtTime: session.intent,
         });
 
-        // Đẩy vào chat queue để AI xử lý (Phase 2)
-        // chatQueue.add({ sessionId: session.id, pageId, userId: settings.userId });
+        // Đẩy vào chat queue để AI xử lý
+        await addChatJob({ sessionId: session.id, pageId, userId: settings.userId });
 
         console.log(`[CHAT WEBHOOK] page=${pageId} psid=${customerPsid} msg="${text?.slice(0, 50)}"`);
       } catch (err) {
@@ -199,11 +200,13 @@ apiRouter.post('/sessions/:id/ai-mode', async (req, res) => {
 
     await chatDB.updateSessionAiMode(session.id, aiMode);
 
-    // Nếu bật lại AI → đẩy job xử lý tin nhắn chưa trả lời (Phase 2)
-    // if (aiMode === 'AI') {
-    //   const unreplied = await chatDB.getUnrepliedSessions(session.pageId);
-    //   unreplied.forEach((s) => chatQueue.add({ sessionId: s.id }));
-    // }
+    // Nếu bật lại AI → đẩy job xử lý tin nhắn chưa trả lời
+    if (aiMode === 'AI') {
+      const unreplied = await chatDB.getUnrepliedSessions(session.pageId);
+      await Promise.all(
+        unreplied.map((s) => addChatJob({ sessionId: s.id, pageId: session.pageId, userId: req.user.id }))
+      );
+    }
 
     res.json({ sessionId: session.id, aiMode });
   } catch (err) {

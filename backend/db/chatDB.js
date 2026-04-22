@@ -390,6 +390,22 @@ const updateOrderStatus = async (orderId, status) => {
   return rows[0] || null;
 };
 
+// Đánh dấu tin nhắn khách là xác nhận đơn hàng, cập nhật chat_orders
+const markCustomerConfirmed = async (sessionId, messageId) => {
+  await pool.query(
+    `UPDATE chat_messages SET is_customer_confirmed = true WHERE id = $1`,
+    [messageId]
+  );
+  await pool.query(
+    `UPDATE chat_orders
+     SET customer_confirmed_msg_id = $1,
+         customer_confirmed_at = NOW(),
+         status = 'PENDING_REVIEW'
+     WHERE session_id = $2 AND status = 'PENDING_REVIEW'`,
+    [messageId, sessionId]
+  );
+};
+
 
 module.exports = {
   // Settings
@@ -420,4 +436,5 @@ module.exports = {
   getOrderBySession,
   getPendingOrders,
   updateOrderStatus,
+  markCustomerConfirmed,
 };
