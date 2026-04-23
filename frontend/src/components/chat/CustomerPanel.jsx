@@ -71,34 +71,38 @@ const InfoTab = ({ session, confirmationMessages, onIntentChange, onTagAdd, onTa
         </select>
       </div>
 
-      {/* AI Turn count + Mood */}
-      <div className="flex gap-2">
-        <div className="flex-1 flex items-center justify-between bg-gray-50 rounded-xl px-3 py-2">
-          <span className="text-gray-500 text-xs">AI replies</span>
-          <span className="text-gray-700 font-semibold text-sm">{session.aiTurnCount ?? 0} / 10</span>
+      {/* Mood */}
+      {session.customerMood && session.customerMood !== 'neutral' && (
+        <div className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium ${
+          session.customerMood === 'positive' ? 'bg-green-50 text-green-700' :
+          session.customerMood === 'negative' ? 'bg-red-50 text-red-600' :
+          session.customerMood === 'urgent'   ? 'bg-orange-50 text-orange-600' :
+          'bg-gray-50 text-gray-500'
+        }`}>
+          {session.customerMood === 'positive' ? '😊' :
+           session.customerMood === 'negative' ? '😤' :
+           session.customerMood === 'urgent'   ? '⚡' : '😐'}
+          Tâm trạng: {session.customerMood}
         </div>
-        {session.customerMood && session.customerMood !== 'neutral' && (
-          <div className={`flex items-center gap-1 rounded-xl px-3 py-2 text-xs font-medium shrink-0 ${
-            session.customerMood === 'positive' ? 'bg-green-50 text-green-700' :
-            session.customerMood === 'negative' ? 'bg-red-50 text-red-600' :
-            session.customerMood === 'urgent'   ? 'bg-orange-50 text-orange-600' :
-            'bg-gray-50 text-gray-500'
-          }`}>
-            {session.customerMood === 'positive' ? '😊' :
-             session.customerMood === 'negative' ? '😤' :
-             session.customerMood === 'urgent'   ? '⚡' : '😐'}
-            {session.customerMood}
-          </div>
-        )}
-      </div>
+      )}
 
       {/* Identified Product */}
       {session.identifiedProduct && (
-        <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
-          <div className="text-xs text-blue-500 font-medium mb-1">🎯 Sản phẩm quan tâm</div>
-          <div className="text-sm text-blue-800 font-medium">{session.identifiedProduct.name}</div>
-          {session.identifiedProduct.query && session.identifiedProduct.query !== session.identifiedProduct.name && (
-            <div className="text-xs text-blue-400 mt-0.5">query: {session.identifiedProduct.query}</div>
+        <div className={`rounded-xl p-3 border ${
+          session.productConfirmed
+            ? 'bg-green-50 border-green-200'
+            : 'bg-blue-50 border-blue-100'
+        }`}>
+          <div className={`text-xs font-medium mb-1 ${session.productConfirmed ? 'text-green-600' : 'text-blue-500'}`}>
+            {session.productConfirmed ? '✅ SP đã khoá' : '🎯 SP đang hỏi'}
+          </div>
+          <div className={`text-sm font-medium ${session.productConfirmed ? 'text-green-800' : 'text-blue-800'}`}>
+            {session.identifiedProduct.name}
+          </div>
+          {session.identifiedProduct.price && (
+            <div className="text-xs text-gray-500 mt-0.5">
+              {Number(session.identifiedProduct.price).toLocaleString('vi-VN')}đ
+            </div>
           )}
         </div>
       )}
@@ -137,6 +141,39 @@ const InfoTab = ({ session, confirmationMessages, onIntentChange, onTagAdd, onTa
           >
             +
           </button>
+        </div>
+      </div>
+
+      {/* State machine counters */}
+      <div className="bg-gray-50 rounded-xl px-3 py-2 space-y-1">
+        <div className="text-xs text-gray-400 font-medium mb-1">Giới hạn AI</div>
+        {!session.identifiedProduct && (
+          <div className="flex justify-between text-xs">
+            <span className="text-gray-500">Tìm SP</span>
+            <span className={`font-medium ${(session.noProductTurns ?? 0) >= 4 ? 'text-red-500' : 'text-gray-600'}`}>
+              {session.noProductTurns ?? 0} / 5
+            </span>
+          </div>
+        )}
+        {session.identifiedProduct && !session.productConfirmed && (
+          <div className="flex justify-between text-xs">
+            <span className="text-gray-500">Xác nhận SP</span>
+            <span className={`font-medium ${(session.unconfirmedTurns ?? 0) >= 6 ? 'text-red-500' : 'text-gray-600'}`}>
+              {session.unconfirmedTurns ?? 0} / 8
+            </span>
+          </div>
+        )}
+        {session.productConfirmed && (
+          <div className="flex justify-between text-xs">
+            <span className="text-gray-500">Chốt đơn</span>
+            <span className={`font-medium ${(session.closingTurns ?? 0) >= 4 ? 'text-red-500' : 'text-gray-600'}`}>
+              {session.closingTurns ?? 0} / 5
+            </span>
+          </div>
+        )}
+        <div className="flex justify-between text-xs border-t border-gray-200 pt-1 mt-1">
+          <span className="text-gray-400">Tổng lượt AI</span>
+          <span className="text-gray-500">{session.aiTurnCount ?? 0}</span>
         </div>
       </div>
     </div>
@@ -298,7 +335,7 @@ const CustomerPanel = ({ session, messages, order, confirmationMessages, onInten
     }`;
 
   return (
-    <div className="flex flex-col w-80 shrink-0 border-l border-gray-200 bg-white h-full">
+    <div className="flex flex-col w-96 shrink-0 border-l border-gray-200 bg-white h-full">
       {/* Tab header */}
       <div className="flex border-b border-gray-100 shrink-0">
         <button className={tabClass('info')} onClick={() => setTab('info')}>

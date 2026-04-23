@@ -10,7 +10,7 @@ const ConversationList = ({ sessions, selectedId, onSelect, filter, onFilterChan
   const chot = sessions.filter((s) => s.intent === 'Đang Chốt' || s.intent === 'Đã Chốt').length;
 
   return (
-    <div className="flex flex-col h-full border-r border-gray-200 bg-white w-72 shrink-0">
+    <div className="flex flex-col h-full border-r border-gray-200 bg-white w-80 shrink-0">
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-100">
         <div className="flex items-center justify-between mb-2">

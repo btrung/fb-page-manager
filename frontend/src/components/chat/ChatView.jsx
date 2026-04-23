@@ -18,9 +18,9 @@ const Bubble = ({ msg }) => {
   const timeStr = `${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}`;
 
   return (
-    <div className={`flex flex-col max-w-[75%] ${isCustomer ? 'items-start' : 'items-end self-end ml-auto'}`}>
+    <div className={`flex flex-col max-w-[55%] ${isCustomer ? 'items-start' : 'items-end self-end ml-auto'}`}>
       {label && <span className="text-xs text-gray-400 mb-0.5 px-1">{label}</span>}
-      <div className={`px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap break-words ${bubbleClass}`}>
+      <div className={`px-3 py-2 rounded-2xl text-base whitespace-pre-wrap break-words ${bubbleClass}`}>
         {msg.content}
         {msg.attachments?.filter((a) => a.type === 'image' && a.url).map((a, i) => (
           <img key={i} src={a.url} alt="attachment" className="mt-1 max-w-[200px] rounded-lg" />
@@ -108,28 +108,30 @@ const ChatView = ({ session, messages, onAiModeToggle, onMessageSent }) => {
 
       {/* Input */}
       <div className="bg-white border-t border-gray-200 px-4 py-3 shrink-0">
-        {!isHuman && (
-          <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-2 flex items-center gap-1.5">
-            <span>🤖</span>
-            <span>AI đang tự vấn. Gõ tin nhắn sẽ tự chuyển sang chế độ Người Tư Vấn.</span>
+        <div>
+          {!isHuman && (
+            <div className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 mb-2 flex items-center gap-1.5">
+              <span>🤖</span>
+              <span>AI đang tự vấn. Gõ tin nhắn sẽ tự chuyển sang chế độ Người Tư Vấn.</span>
+            </div>
+          )}
+          <div className="flex items-end gap-2">
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Nhập tin nhắn... (Enter để gửi)"
+              rows={2}
+              className="flex-1 resize-none border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-facebook-blue"
+            />
+            <button
+              onClick={handleSend}
+              disabled={!text.trim() || sending}
+              className="bg-facebook-blue text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-facebook-dark disabled:opacity-40 transition-colors shrink-0"
+            >
+              {sending ? '...' : 'Gửi'}
+            </button>
           </div>
-        )}
-        <div className="flex items-end gap-2">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Nhập tin nhắn... (Enter để gửi)"
-            rows={2}
-            className="flex-1 resize-none border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-facebook-blue"
-          />
-          <button
-            onClick={handleSend}
-            disabled={!text.trim() || sending}
-            className="bg-facebook-blue text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-facebook-dark disabled:opacity-40 transition-colors shrink-0"
-          >
-            {sending ? '...' : 'Gửi'}
-          </button>
         </div>
       </div>
     </div>
