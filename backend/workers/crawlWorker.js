@@ -290,6 +290,7 @@ const processCrawlJob = async (job) => {
             is_sale_post: llm.is_sale_post ?? false,
             current_price: llm.price || null,
             post_created_time: post.created_time || null,
+            image_url: post._imageUrls?.[0] || post.full_picture || null,
           }, { timeout: 120000 }).catch((err) => {
             console.warn(`[CRAWL] Text embed thất bại post ${post.id}: ${err.message}`);
           });
