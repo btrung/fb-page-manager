@@ -19,8 +19,11 @@ from app.services.chat_llm_service import (
     generate_reply,
     generate_probe,
     generate_clarify,
+    generate_product_confirm,
+    generate_closing_script,
     generate_confirmation,
     extract_order_info,
+    extract_order_fields,
 )
 from app.services.embedding_service import embedding_service
 from app.services.image_embedding_service import image_embedding_service
@@ -40,7 +43,8 @@ class Message(BaseModel):
 
 
 class ClassifyIntentRequest(BaseModel):
-    messages: list[Message]
+    message: str
+    has_image: bool = False
 
 
 class GenerateReplyRequest(BaseModel):
@@ -53,6 +57,11 @@ class GenerateReplyRequest(BaseModel):
     reply_style: Optional[str] = None
     customer_name: Optional[str] = None
     identified_product: Optional[dict] = None
+    product_confirmed: bool = False
+
+
+class GenerateProductConfirmRequest(BaseModel):
+    product_name: str
 
 
 class GenerateProbeRequest(BaseModel):
@@ -89,11 +98,9 @@ class SearchByImageRequest(BaseModel):
 
 @router.post("/classify-intent")
 async def api_classify_intent(body: ClassifyIntentRequest):
-    if not body.messages:
-        raise HTTPException(status_code=400, detail="messages required")
-
-    messages = [{"role": m.role, "content": m.content} for m in body.messages]
-    result = await classify_intent(messages)
+    if not body.message and not body.has_image:
+        raise HTTPException(status_code=400, detail="message required")
+    result = await classify_intent(body.message, body.has_image)
     return result
 
 
@@ -150,14 +157,19 @@ async def api_generate_reply(body: GenerateReplyRequest):
         reply_style=body.reply_style,
         customer_name=body.customer_name,
         identified_product=body.identified_product,
+        product_confirmed=body.product_confirmed,
     )
 
-    # Lấy ảnh sản phẩm từ image_results để đính kèm
-    product_images = [
-        (r.get("image_url") or r.get("payload", {}).get("image_url"))
-        for r in image_results[:2]
-        if r.get("image_url") or r.get("payload", {}).get("image_url")
-    ]
+    # Lấy ảnh sản phẩm: ưu tiên image_results, fallback sang text search results
+    product_images = []
+    seen_urls = set()
+    for r in (image_results + products_deduped):
+        url = r.get("image_url") or r.get("payload", {}).get("image_url")
+        if url and url not in seen_urls:
+            product_images.append(url)
+            seen_urls.add(url)
+        if len(product_images) >= 2:
+            break
 
     return {
         "reply": reply,
@@ -173,6 +185,84 @@ async def api_generate_reply(body: GenerateReplyRequest):
 @router.post("/generate-probe")
 async def api_generate_probe(body: GenerateProbeRequest):
     reply = await generate_probe(body.customer_message)
+    return {"reply": reply}
+
+
+# =============================================
+# POST /chat/search-products
+# Tìm SP trong Qdrant — không gọi LLM, chỉ vector search
+# =============================================
+
+class SearchProductsRequest(BaseModel):
+    query: str
+    user_id: str
+    page_id: str
+    top_k: int = 3
+
+
+@router.post("/search-products")
+async def api_search_products(body: SearchProductsRequest):
+    results = []
+    try:
+        query_vec = await embedding_service.embed_query(body.query)
+        results = await qdrant_service.search_similar_posts(
+            query_vector=query_vec,
+            user_id=body.user_id,
+            top_k=body.top_k,
+        )
+    except Exception as e:
+        logger.warning(f"[CHAT] search-products failed: {e}")
+
+    product_images = []
+    seen_urls: set = set()
+    for r in results:
+        url = r.get("image_url") or r.get("payload", {}).get("image_url")
+        if url and url not in seen_urls:
+            product_images.append(url)
+            seen_urls.add(url)
+        if len(product_images) >= 2:
+            break
+
+    top = results[0] if results else {}
+    product_name = top.get("product_name") or top.get("payload", {}).get("product_name") or ""
+
+    return {
+        "found": len(results) > 0,
+        "product_name": product_name,
+        "products": results,
+        "product_images": product_images,
+    }
+
+
+# =============================================
+# POST /chat/generate-product-confirm
+# =============================================
+
+@router.post("/generate-product-confirm")
+async def api_generate_product_confirm(body: GenerateProductConfirmRequest):
+    reply = await generate_product_confirm(body.product_name)
+    return {"reply": reply}
+
+
+# =============================================
+# POST /chat/generate-closing
+# =============================================
+
+class GenerateClosingRequest(BaseModel):
+    product_name: str
+    price: Optional[int] = None
+    product_content: str = ""
+    reply_style: Optional[str] = None
+
+
+@router.post("/generate-closing")
+async def api_generate_closing(body: GenerateClosingRequest):
+    reply = await generate_closing_script(
+        body.product_name,
+        body.price,
+        body.product_content,
+        body.reply_style,
+    )
     return {"reply": reply}
 
 
@@ -207,6 +297,21 @@ async def api_extract_order(body: ExtractOrderRequest):
         raise HTTPException(status_code=400, detail="messages required")
     messages = [{"role": m.role, "content": m.content} for m in body.messages]
     result = await extract_order_info(messages)
+    return result
+
+
+# =============================================
+# POST /chat/extract-order-fields
+# Trích xuất name/phone/address từ 1 tin nhắn
+# =============================================
+
+class ExtractOrderFieldsRequest(BaseModel):
+    message: str
+
+
+@router.post("/extract-order-fields")
+async def api_extract_order_fields(body: ExtractOrderFieldsRequest):
+    result = await extract_order_fields(body.message)
     return result
 
 

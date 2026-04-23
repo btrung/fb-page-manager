@@ -65,18 +65,23 @@ const upsertAiPageSettings = async (userId, pageId, { aiEnabled, activeHours, re
 // CHAT SESSIONS
 // =============================================
 
+const _SESSION_COLS = `
+  id, page_id AS "pageId", user_id AS "userId",
+  customer_psid AS "customerPsid", customer_name AS "customerName",
+  customer_avatar AS "customerAvatar", intent, ai_mode AS "aiMode",
+  cooldown_until AS "cooldownUntil", ai_turn_count AS "aiTurnCount",
+  last_message_at AS "lastMessageAt", created_at AS "createdAt",
+  identified_product AS "identifiedProduct",
+  customer_mood AS "customerMood",
+  product_confirmed AS "productConfirmed",
+  no_product_turns AS "noProductTurns",
+  unconfirmed_turns AS "unconfirmedTurns",
+  closing_turns AS "closingTurns",
+  profile_confirm_asked AS "profileConfirmAsked"`;
+
 const getOrCreateSession = async ({ pageId, userId, customerPsid, customerName, customerAvatar }) => {
-  // Thử tìm session đã có
   const { rows: existing } = await pool.query(
-    `SELECT id, page_id AS "pageId", user_id AS "userId",
-            customer_psid AS "customerPsid", customer_name AS "customerName",
-            customer_avatar AS "customerAvatar", intent, ai_mode AS "aiMode",
-            cooldown_until AS "cooldownUntil", ai_turn_count AS "aiTurnCount",
-            last_message_at AS "lastMessageAt", created_at AS "createdAt",
-            identified_product AS "identifiedProduct",
-            customer_mood AS "customerMood",
-            clarify_count AS "clarifyCount"
-     FROM chat_sessions
+    `SELECT ${_SESSION_COLS} FROM chat_sessions
      WHERE page_id = $1 AND customer_psid = $2`,
     [pageId, customerPsid]
   );
@@ -94,19 +99,11 @@ const getOrCreateSession = async ({ pageId, userId, customerPsid, customerName, 
     return existing[0];
   }
 
-  // Tạo session mới
   const { rows } = await pool.query(
     `INSERT INTO chat_sessions
        (page_id, user_id, customer_psid, customer_name, customer_avatar)
      VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, page_id AS "pageId", user_id AS "userId",
-               customer_psid AS "customerPsid", customer_name AS "customerName",
-               customer_avatar AS "customerAvatar", intent, ai_mode AS "aiMode",
-               cooldown_until AS "cooldownUntil", ai_turn_count AS "aiTurnCount",
-               last_message_at AS "lastMessageAt", created_at AS "createdAt",
-               identified_product AS "identifiedProduct",
-               customer_mood AS "customerMood",
-               clarify_count AS "clarifyCount"`,
+     RETURNING ${_SESSION_COLS}`,
     [pageId, userId, customerPsid, customerName || null, customerAvatar || null]
   );
   return rows[0];
@@ -114,15 +111,7 @@ const getOrCreateSession = async ({ pageId, userId, customerPsid, customerName, 
 
 const getSessionById = async (sessionId) => {
   const { rows } = await pool.query(
-    `SELECT id, page_id AS "pageId", user_id AS "userId",
-            customer_psid AS "customerPsid", customer_name AS "customerName",
-            customer_avatar AS "customerAvatar", intent, ai_mode AS "aiMode",
-            cooldown_until AS "cooldownUntil", ai_turn_count AS "aiTurnCount",
-            last_message_at AS "lastMessageAt", created_at AS "createdAt",
-            identified_product AS "identifiedProduct",
-            customer_mood AS "customerMood",
-            clarify_count AS "clarifyCount"
-     FROM chat_sessions WHERE id = $1`,
+    `SELECT ${_SESSION_COLS} FROM chat_sessions WHERE id = $1`,
     [sessionId]
   );
   return rows[0] || null;
@@ -137,11 +126,12 @@ const getSessionsByUser = async (userId, { intentFilter, aiModeFilter } = {}) =>
            s.last_message_at AS "lastMessageAt",
            s.identified_product AS "identifiedProduct",
            s.customer_mood AS "customerMood",
-           s.clarify_count AS "clarifyCount",
-           -- Tin nhắn cuối cùng
+           s.product_confirmed AS "productConfirmed",
+           s.no_product_turns AS "noProductTurns",
+           s.unconfirmed_turns AS "unconfirmedTurns",
+           s.closing_turns AS "closingTurns",
            (SELECT content FROM chat_messages
             WHERE session_id = s.id ORDER BY created_at DESC LIMIT 1) AS "lastMessageContent",
-           -- Số tags
            (SELECT COUNT(*) FROM session_tags WHERE session_id = s.id) AS "tagCount"
     FROM chat_sessions s
     WHERE s.user_id = $1`;
@@ -218,19 +208,68 @@ const touchSession = async (sessionId) => {
   );
 };
 
-const updateSessionIntelligence = async (sessionId, { identifiedProduct, customerMood, clarifyCount } = {}) => {
+const updateSessionIntelligence = async (sessionId, updates = {}) => {
+  const sets = [];
+  const params = [sessionId];
+  let i = 2;
+
+  if ('identifiedProduct' in updates) {
+    if (updates.identifiedProduct === null) {
+      sets.push(`identified_product = NULL`);
+    } else {
+      sets.push(`identified_product = $${i}::jsonb`);
+      params.push(JSON.stringify(updates.identifiedProduct));
+      i++;
+    }
+  }
+  if ('customerMood' in updates && updates.customerMood != null) {
+    sets.push(`customer_mood = $${i}`);
+    params.push(updates.customerMood);
+    i++;
+  }
+  if ('productConfirmed' in updates && updates.productConfirmed != null) {
+    sets.push(`product_confirmed = $${i}`);
+    params.push(updates.productConfirmed);
+    i++;
+  }
+  if ('noProductTurns' in updates && updates.noProductTurns != null) {
+    sets.push(`no_product_turns = $${i}`);
+    params.push(updates.noProductTurns);
+    i++;
+  }
+  if ('unconfirmedTurns' in updates && updates.unconfirmedTurns != null) {
+    sets.push(`unconfirmed_turns = $${i}`);
+    params.push(updates.unconfirmedTurns);
+    i++;
+  }
+  if ('closingTurns' in updates && updates.closingTurns != null) {
+    sets.push(`closing_turns = $${i}`);
+    params.push(updates.closingTurns);
+    i++;
+  }
+  if ('profileConfirmAsked' in updates) {
+    sets.push(`profile_confirm_asked = $${i}`);
+    params.push(updates.profileConfirmAsked ?? false);
+    i++;
+  }
+
+  if (!sets.length) return;
   await pool.query(
-    `UPDATE chat_sessions SET
-       identified_product = COALESCE($1::jsonb, identified_product),
-       customer_mood      = COALESCE($2, customer_mood),
-       clarify_count      = COALESCE($3, clarify_count)
-     WHERE id = $4`,
-    [
-      identifiedProduct != null ? JSON.stringify(identifiedProduct) : null,
-      customerMood || null,
-      clarifyCount ?? null,
-      sessionId,
-    ]
+    `UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $1`,
+    params
+  );
+};
+
+const incrementCounter = async (sessionId, counter) => {
+  const col = {
+    no_product_turns:  'no_product_turns',
+    unconfirmed_turns: 'unconfirmed_turns',
+    closing_turns:     'closing_turns',
+  }[counter];
+  if (!col) throw new Error(`Unknown counter: ${counter}`);
+  await pool.query(
+    `UPDATE chat_sessions SET ${col} = ${col} + 1 WHERE id = $1`,
+    [sessionId]
   );
 };
 
@@ -291,6 +330,20 @@ const saveMessage = async ({
     await touchSession(sessionId);
   }
 
+  return rows[0] || null;
+};
+
+const getMessageById = async (messageId) => {
+  const { rows } = await pool.query(
+    `SELECT id, sender_type AS "senderType", content, attachments,
+            intent_at_time AS "intentAtTime",
+            is_confirmation_summary AS "isConfirmationSummary",
+            is_customer_confirmed AS "isCustomerConfirmed",
+            fb_message_id AS "fbMessageId",
+            created_at AS "createdAt"
+     FROM chat_messages WHERE id = $1`,
+    [messageId]
+  );
   return rows[0] || null;
 };
 
@@ -421,6 +474,39 @@ const updateOrderStatus = async (orderId, status) => {
   return rows[0] || null;
 };
 
+// =============================================
+// CUSTOMER PROFILES
+// =============================================
+
+const getCustomerProfile = async (customerPsid, pageId) => {
+  const { rows } = await pool.query(
+    `SELECT id, customer_psid AS "customerPsid", page_id AS "pageId",
+            name, phone, address, note,
+            created_at AS "createdAt", updated_at AS "updatedAt"
+     FROM customer_profiles
+     WHERE customer_psid = $1 AND page_id = $2`,
+    [customerPsid, pageId]
+  );
+  return rows[0] || null;
+};
+
+const upsertCustomerProfile = async ({ customerPsid, pageId, name, phone, address, note }) => {
+  const { rows } = await pool.query(
+    `INSERT INTO customer_profiles (customer_psid, page_id, name, phone, address, note, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())
+     ON CONFLICT (customer_psid, page_id) DO UPDATE SET
+       name       = COALESCE($3, customer_profiles.name),
+       phone      = COALESCE($4, customer_profiles.phone),
+       address    = COALESCE($5, customer_profiles.address),
+       note       = COALESCE($6, customer_profiles.note),
+       updated_at = NOW()
+     RETURNING id, name, phone, address, note`,
+    [customerPsid, pageId, name || null, phone || null, address || null, note || null]
+  );
+  return rows[0];
+};
+
+
 // Đánh dấu tin nhắn khách là xác nhận đơn hàng, cập nhật chat_orders
 const markCustomerConfirmed = async (sessionId, messageId) => {
   await pool.query(
@@ -454,9 +540,11 @@ module.exports = {
   incrementTurnCount,
   touchSession,
   updateSessionIntelligence,
+  incrementCounter,
   getUnrepliedSessions,
   // Messages
   saveMessage,
+  getMessageById,
   getSessionMessages,
   getConfirmationMessages,
   // Tags
@@ -469,4 +557,7 @@ module.exports = {
   getPendingOrders,
   updateOrderStatus,
   markCustomerConfirmed,
+  // Customer Profiles
+  getCustomerProfile,
+  upsertCustomerProfile,
 };

@@ -77,7 +77,7 @@ webhookRouter.post('/', express.json(), async (req, res) => {
         });
 
         // Lưu tin nhắn của khách
-        await chatDB.saveMessage({
+        const savedMsg = await chatDB.saveMessage({
           sessionId:    session.id,
           senderType:   'customer',
           content:      text,
@@ -86,8 +86,8 @@ webhookRouter.post('/', express.json(), async (req, res) => {
           intentAtTime: session.intent,
         });
 
-        // Đẩy vào chat queue để AI xử lý
-        await addChatJob({ sessionId: session.id, pageId, userId: settings.userId });
+        // Đẩy vào chat queue để AI xử lý (kèm messageId để worker dùng đúng tin nhắn)
+        await addChatJob({ sessionId: session.id, pageId, userId: settings.userId, messageId: savedMsg?.id });
 
         console.log(`[CHAT WEBHOOK] page=${pageId} psid=${customerPsid} msg="${text?.slice(0, 50)}"`);
       } catch (err) {

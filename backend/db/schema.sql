@@ -359,11 +359,42 @@ CREATE INDEX IF NOT EXISTS idx_chat_orders_user
 CREATE INDEX IF NOT EXISTS idx_chat_orders_status
   ON chat_orders (status) WHERE status = 'PENDING_REVIEW';
 
--- Phase 7: Message Intelligence — thêm columns vào bảng đã có
+-- Phase 7: Message Intelligence
 ALTER TABLE chat_sessions
   ADD COLUMN IF NOT EXISTS identified_product JSONB,
   ADD COLUMN IF NOT EXISTS customer_mood      VARCHAR(20) DEFAULT 'neutral',
-  ADD COLUMN IF NOT EXISTS clarify_count      INTEGER     DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS clarify_count      INTEGER     DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS product_confirmed  BOOLEAN     DEFAULT false;
 
 ALTER TABLE ai_page_settings
   ADD COLUMN IF NOT EXISTS reply_style TEXT;
+
+-- State machine counters (thay clarify_count)
+ALTER TABLE chat_sessions
+  ADD COLUMN IF NOT EXISTS no_product_turns  INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS unconfirmed_turns INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS closing_turns     INTEGER DEFAULT 0;
+
+-- =============================================
+-- 13. Customer Profiles — hồ sơ khách hàng
+--     Tra cứu theo Facebook PSID, tái dùng khi quay lại mua
+-- =============================================
+CREATE TABLE IF NOT EXISTS customer_profiles (
+  id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_psid VARCHAR(255) NOT NULL,
+  page_id       VARCHAR(255) NOT NULL,
+  name          VARCHAR(255),
+  phone         VARCHAR(50),
+  address       TEXT,
+  note          TEXT,
+  created_at    TIMESTAMPTZ  DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ  DEFAULT NOW(),
+  UNIQUE(customer_psid, page_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_profiles_psid
+  ON customer_profiles (customer_psid, page_id);
+
+-- Profile confirm flow: track đã hỏi xác nhận thông tin cũ chưa
+ALTER TABLE chat_sessions
+  ADD COLUMN IF NOT EXISTS profile_confirm_asked BOOLEAN DEFAULT false;

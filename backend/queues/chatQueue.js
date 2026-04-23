@@ -27,11 +27,11 @@ const getChatQueue = () => {
   return _chatQueue;
 };
 
-const addChatJob = async ({ sessionId, pageId, userId }) => {
+const addChatJob = async ({ sessionId, pageId, userId, messageId }) => {
   const queue = getChatQueue();
   const job = await queue.add(
     'process-message',
-    { sessionId, pageId, userId },
+    { sessionId, pageId, userId, messageId },
     { delay: 2000 },
   );
   return { jobId: job.id };
