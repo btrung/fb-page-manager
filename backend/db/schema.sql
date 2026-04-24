@@ -398,3 +398,15 @@ CREATE INDEX IF NOT EXISTS idx_customer_profiles_psid
 -- Profile confirm flow: track đã hỏi xác nhận thông tin cũ chưa
 ALTER TABLE chat_sessions
   ADD COLUMN IF NOT EXISTS profile_confirm_asked BOOLEAN DEFAULT false;
+
+-- Phase 8: State 2 consultation + niche
+ALTER TABLE chat_sessions
+  ADD COLUMN IF NOT EXISTS product_variants  JSONB   DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS variant_confirmed BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS consulting_turns  INTEGER DEFAULT 0;
+
+ALTER TABLE chat_orders
+  ADD COLUMN IF NOT EXISTS product_variants JSONB;
+
+ALTER TABLE ai_page_settings
+  ADD COLUMN IF NOT EXISTS niche VARCHAR(100);

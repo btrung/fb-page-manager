@@ -5,6 +5,21 @@
 const { pool } = require('./migrate');
 
 // =============================================
+// POST CONTENT — lấy mô tả SP từ bảng posts
+// =============================================
+
+const getPostContent = async (postId) => {
+  if (!postId) return null;
+  const { rows } = await pool.query(
+    `SELECT what_is_product, what_is_promotion, content
+     FROM posts WHERE id = $1 LIMIT 1`,
+    [postId]
+  );
+  return rows[0] || null;
+};
+
+
+// =============================================
 // AI PAGE SETTINGS
 // =============================================
 
@@ -77,7 +92,10 @@ const _SESSION_COLS = `
   no_product_turns AS "noProductTurns",
   unconfirmed_turns AS "unconfirmedTurns",
   closing_turns AS "closingTurns",
-  profile_confirm_asked AS "profileConfirmAsked"`;
+  profile_confirm_asked AS "profileConfirmAsked",
+  product_variants AS "productVariants",
+  variant_confirmed AS "variantConfirmed",
+  consulting_turns AS "consultingTurns"`;
 
 const getOrCreateSession = async ({ pageId, userId, customerPsid, customerName, customerAvatar }) => {
   const { rows: existing } = await pool.query(
@@ -252,6 +270,21 @@ const updateSessionIntelligence = async (sessionId, updates = {}) => {
     params.push(updates.profileConfirmAsked ?? false);
     i++;
   }
+  if ('productVariants' in updates) {
+    sets.push(`product_variants = $${i}::jsonb`);
+    params.push(JSON.stringify(updates.productVariants ?? {}));
+    i++;
+  }
+  if ('variantConfirmed' in updates) {
+    sets.push(`variant_confirmed = $${i}`);
+    params.push(updates.variantConfirmed ?? false);
+    i++;
+  }
+  if ('consultingTurns' in updates) {
+    sets.push(`consulting_turns = $${i}`);
+    params.push(updates.consultingTurns ?? 0);
+    i++;
+  }
 
   if (!sets.length) return;
   await pool.query(
@@ -264,6 +297,7 @@ const incrementCounter = async (sessionId, counter) => {
   const col = {
     no_product_turns:  'no_product_turns',
     unconfirmed_turns: 'unconfirmed_turns',
+    consulting_turns:  'consulting_turns',
     closing_turns:     'closing_turns',
   }[counter];
   if (!col) throw new Error(`Unknown counter: ${counter}`);
@@ -364,6 +398,25 @@ const getSessionMessages = async (sessionId, limit = 20) => {
   return rows;
 };
 
+// Lấy TẤT CẢ tin nhắn khách kể từ lần AI/human reply cuối cùng
+// Dùng để gom nhiều tin nhắn liên tiếp thành 1 context
+const getUnrepliedCustomerMessages = async (sessionId) => {
+  const { rows } = await pool.query(
+    `SELECT id, content, attachments, created_at AS "createdAt"
+     FROM chat_messages
+     WHERE session_id = $1
+       AND sender_type = 'customer'
+       AND created_at > COALESCE(
+         (SELECT MAX(created_at) FROM chat_messages
+          WHERE session_id = $1 AND sender_type IN ('ai', 'human')),
+         '1970-01-01'
+       )
+     ORDER BY created_at ASC`,
+    [sessionId]
+  );
+  return rows;
+};
+
 const getConfirmationMessages = async (sessionId) => {
   const { rows } = await pool.query(
     `SELECT id, sender_type AS "senderType", content, attachments,
@@ -416,18 +469,20 @@ const getSessionTags = async (sessionId) => {
 // =============================================
 
 const createOrder = async ({
-  sessionId, customerName, phone, address, productName, note,
+  sessionId, customerName, phone, address, productName, productVariants = null, note,
   confirmationSummaryMsgId = null, customerConfirmedMsgId = null,
   customerConfirmedAt = null,
 }) => {
   const { rows } = await pool.query(
     `INSERT INTO chat_orders
-       (session_id, customer_name, phone, address, product_name, note,
+       (session_id, customer_name, phone, address, product_name, product_variants, note,
         confirmation_summary_msg_id, customer_confirmed_msg_id, customer_confirmed_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING id, status, created_at AS "createdAt"`,
     [
-      sessionId, customerName, phone, address, productName, note,
+      sessionId, customerName, phone, address, productName,
+      productVariants ? JSON.stringify(productVariants) : null,
+      note,
       confirmationSummaryMsgId, customerConfirmedMsgId, customerConfirmedAt,
     ]
   );
@@ -508,6 +563,30 @@ const upsertCustomerProfile = async ({ customerPsid, pageId, name, phone, addres
 
 
 // Đánh dấu tin nhắn khách là xác nhận đơn hàng, cập nhật chat_orders
+const getLastConfirmationSummary = async (sessionId) => {
+  const { rows } = await pool.query(
+    `SELECT id, content, created_at AS "createdAt"
+     FROM chat_messages
+     WHERE session_id = $1 AND is_confirmation_summary = true
+     ORDER BY created_at DESC LIMIT 1`,
+    [sessionId]
+  );
+  return rows[0] || null;
+};
+
+const updateOrderInfo = async (sessionId, { customerName, phone, address, productVariants }) => {
+  await pool.query(
+    `UPDATE chat_orders
+     SET customer_name = COALESCE($2, customer_name),
+         phone         = COALESCE($3, phone),
+         address       = COALESCE($4, address),
+         product_variants = COALESCE($5::jsonb, product_variants)
+     WHERE session_id = $1 AND status = 'PENDING_REVIEW'`,
+    [sessionId, customerName || null, phone || null, address || null,
+     productVariants ? JSON.stringify(productVariants) : null]
+  );
+};
+
 const markCustomerConfirmed = async (sessionId, messageId) => {
   await pool.query(
     `UPDATE chat_messages SET is_customer_confirmed = true WHERE id = $1`,
@@ -546,6 +625,7 @@ module.exports = {
   saveMessage,
   getMessageById,
   getSessionMessages,
+  getUnrepliedCustomerMessages,
   getConfirmationMessages,
   // Tags
   addSessionTag,
@@ -557,7 +637,11 @@ module.exports = {
   getPendingOrders,
   updateOrderStatus,
   markCustomerConfirmed,
+  getLastConfirmationSummary,
+  updateOrderInfo,
   // Customer Profiles
   getCustomerProfile,
   upsertCustomerProfile,
+  // Post content
+  getPostContent,
 };

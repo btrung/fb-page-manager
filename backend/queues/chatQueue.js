@@ -27,12 +27,15 @@ const getChatQueue = () => {
   return _chatQueue;
 };
 
-const addChatJob = async ({ sessionId, pageId, userId, messageId }) => {
+const addChatJob = async ({ sessionId, pageId, userId }) => {
   const queue = getChatQueue();
+  // Delay 7s để gom nhiều tin nhắn liên tiếp vào 1 lần xử lý.
+  // Không dùng jobId dedup vì completed jobs giữ ID 30 phút → drop tin mới.
+  // getUnrepliedCustomerMessages trong worker tự dedup: nếu không có tin mới → skip.
   const job = await queue.add(
     'process-message',
-    { sessionId, pageId, userId, messageId },
-    { delay: 2000 },
+    { sessionId, pageId, userId },
+    { delay: 7000 },
   );
   return { jobId: job.id };
 };
