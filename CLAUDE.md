@@ -124,7 +124,9 @@ variant_confirmed     BOOLEAN   -- State 2 xong → State 3
 no_product_turns      INT       -- counter State 0 (max 5)
 unconfirmed_turns     INT       -- counter State 1 (max 8)
 consulting_turns      INT       -- counter State 2 (max 10)
-closing_turns         INT       -- counter State 3 (max 5)
+consulting_turns      INT       -- counter State 2 (max 10)
+closing_turns         INT       -- counter State 3 (max 10)
+candidate_products    JSONB     -- SP candidates khi search ra nhiều kết quả (xóa sau khi chọn)
 ai_mode               VARCHAR   -- 'AI' | 'HUMAN'
 ```
 
@@ -153,17 +155,33 @@ ALTER TABLE ai_page_settings ADD COLUMN IF NOT EXISTS reply_style TEXT;
 LLM lo: văn phong, tâm lý, warmup, extract thông tin từ tin nhắn
 Worker lo: tính toán routing chính xác, không nhờ LLM
 
+**State 0 — tìm SP (2-stage retrieval):**
+- Stage 1: Qdrant vector search top 5 (threshold 0.20)
+- Stage 2: LLM `/rerank-products` chọn SP phù hợp nhất từ candidates
+- confidence=high → 1 SP → confirm ngay + set intent "Muốn Mua"
+- confidence=medium → nhiều SP → gửi tất cả có ảnh + quick_replies hỏi chọn → lưu `candidate_products`
+- confidence=low → không tìm thấy → hỏi lại
+- Session idle >3 ngày → auto reset state về 0 khi khách nhắn lại
+
 **State 2 — variants:**
 - Worker tính `missing = required_variants - keys(current_variants)` → pass `missing_variants` + `is_complete`
-- LLM nhận → hỏi đúng `missing[0]`, không hỏi lại cái đã có
+- LLM hỏi **TẤT CẢ** missing variants trong 1 câu (không hỏi từng cái 1 lượt)
 - Worker set `variant_confirmed` khi `is_complete && confirmed_variants`
+- Timing bug nhỏ: worker tính missing trước khi LLM extract xong tin hiện tại → mất 1 turn. Chấp nhận.
 
-**State 3 — thông tin giao hàng:**
-- Worker tính `missing_fields` từ profile hiện tại (validate: phone regex, name≥2, addr≥10)
-- Pass `missing_fields` + `all_fields_valid` cho LLM
-- LLM nhận → hỏi đúng field thiếu, không hỏi lại cái đã valid
-- Đủ 3 trường → worker gửi summary (chưa tạo đơn)
-- Khách confirm → worker tạo đơn với data cuối cùng
+**State 3 — thông tin giao hàng (webview form):**
+- Vào State 3 → gửi webview button 1 lần (`profileConfirmAsked = false` → true)
+- Khách tap button → mở form HTML trong Messenger, pre-fill profile cũ
+- Form hiển thị: tên SP + giá (locked) + variants (editable) + name/phone/address
+- Submit → `form.js` validate → save profile + update variants → gửi confirmation summary vào chat
+- Khách nhắn "OK" → worker tạo đơn → HUMAN mode
+- **Escape hatch**: nếu `product_hint` khác SP hiện tại → reset toàn bộ, về State 0
+
+### Crawl & Embed
+- `crawlWorker.js` dùng **dòng đầu tiên của post** làm `product_name` trong Qdrant (không dùng `extracted_product_name` của LLM có thể bị rút ngắn)
+- Re-crawl **luôn re-embed** kể cả post đã có trong DB → Qdrant luôn sync
+- LLM extraction prompt yêu cầu tên SP đầy đủ, không rút ngắn
+- Nếu Qdrant bị xóa thủ công → chạy lại crawl là đủ (không cần script thủ công)
 
 ---
 
@@ -198,90 +216,57 @@ pool.query(\`SELECT s.id, s.intent, s.product_confirmed, s.variant_confirmed,
 | File | Vai trò |
 |---|---|
 | `Logic-Feature.md/CHAT_FEATURE.md` | Design doc đầy đủ — **đọc trước** |
-| `Logic-Feature.md/CUSTOMER_INFO_PROCESS.md` | Chi tiết State 3 |
 | `Logic-Feature.md/msg_intel_update.md` | Ý tưởng nâng cấp sales script |
-| `backend/workers/chatWorker.js` | AI pipeline chính — 4 states |
+| `backend/workers/chatWorker.js` | AI pipeline chính — 4 states + rerank |
+| `backend/workers/crawlWorker.js` | Crawl FB posts + embed Qdrant |
+| `backend/routes/form.js` | Webview form giao hàng (State 3) |
 | `backend/db/chatDB.js` | DB layer cho chat |
 | `backend/queues/chatQueue.js` | BullMQ queue, delay 7s |
-| `ai-service/app/routers/chat.py` | AI endpoints |
+| `ai-service/app/routers/chat.py` | AI endpoints (bao gồm /rerank-products) |
 | `ai-service/app/services/chat_llm_service.py` | LLM prompts + functions |
+| `ai-service/app/services/llm_service.py` | LLM extraction cho crawl |
 | `frontend/src/pages/ChatPage.jsx` | UI chat 3 cột |
-| `frontend/src/components/chat/ChatView.jsx` | Thread tin nhắn |
-| `frontend/src/components/chat/CustomerPanel.jsx` | Panel phải — info + đơn |
+| `frontend/src/components/chat/CustomerPanel.jsx` | Panel phải — info + stage badge + đơn |
+| `frontend/vite.config.js` | Proxy config (forward /form, /api... sang backend) |
 
 ---
 
-## ⚠️ VẤN ĐỀ ĐANG CẦN GIẢI QUYẾT (2026-04-24)
+## ✅ ĐÃ HOẠT ĐỘNG (2026-05-15) — CHƯA COMMIT
 
-### Root cause đã xác định
-Kiến trúc hiện tại dùng "worker tính trước → LLM nhận cứng" có **timing bug**:
+Flow đầy đủ đã test xong qua Messenger thật:
+`tìm SP → rerank → confirm → tư vấn + variants → webview form → confirm → tạo đơn`
 
-```
-Turn N: khách nói "xanh lá"
-  Worker đọc DB: current_variants = {size: M}  (chưa có màu)
-  Worker tính:   missing = ["màu"]
-  Pass LLM:      missing_variants = ["màu"], is_complete = false
-  LLM extract:   {màu: xanh lá}  ← đúng
-  LLM reply:     "Anh/chị muốn size nào?"  ← SAI (vì is_complete=false, rule bảo hỏi missing[0])
-  DB save:       {size:M, màu:xanh lá}  ← saved đúng
+### Tất cả files đã thay đổi (chưa commit)
 
-Turn N+1: DB đã có đủ → worker thấy missing=[] → OK
-→ Mất 1 turn vô ích, UX kém
-```
+**Backend:**
+- `backend/routes/form.js` — NEW: webview form, pre-fill, submit, giá fallback từ DB
+- `backend/utils/fbSendApi.js` — `sendWebviewButton`, `sendQuickReplies`
+- `backend/server.js` — đăng ký `/form` route
+- `backend/workers/chatWorker.js` — 2-stage search, candidates, escape hatch, session reset 3 ngày, intent auto-set
+- `backend/workers/crawlWorker.js` — firstLine làm product_name, luôn re-embed, full name
+- `backend/db/chatDB.js` — thêm `candidate_products`, `variantConfirmed`, `profileConfirmAsked` vào `getSessionsByUser`; `productVariants` vào `getOrderBySession`
+- `backend/db/schema.sql` — thêm column `candidate_products JSONB`
 
-**Vấn đề thứ 2:** Khi khách "đổi địa chỉ" mà profile đã đầy đủ → `all_fields_valid=true` → LLM gửi summary lại thay vì hỏi địa chỉ mới.
+**AI Service:**
+- `ai-service/app/routers/chat.py` — thêm `/rerank-products`, `/consult`, `/detect-variants`, `/consult-state3`, `/detect-niche`
+- `ai-service/app/services/chat_llm_service.py` — rerank_products, prompt hỏi all variants 1 lần
+- `ai-service/app/services/llm_service.py` — prompt extract tên SP đầy đủ
 
-### Giải pháp đã đồng ý
-**Quay về LLM quyết định** — bỏ `missing_variants`/`is_complete`/`missing_fields`/`all_fields_valid` khỏi worker. LLM nhận đủ context và tự quyết:
+**Frontend:**
+- `frontend/vite.config.js` — thêm `/form` vào proxy
+- `frontend/src/components/chat/CustomerPanel.jsx` — stage badge (5 giai đoạn), `productVariants` trong ChotTab
 
-```
-Input cho /consult (State 2):
-  - latest_message (hoặc combined)
-  - current_variants  ← LLM tự biết cái nào đã có
-  - required_variants ← LLM tự biết cần hỏi gì
-  - conversation_history (6 tin)
-  - product info + niche
-
-Input cho /consult-state3 (State 3):
-  - latest_message
-  - existing_profile  ← LLM tự biết cái nào valid
-  - product + variants
-```
-
-### Nhiệm vụ cụ thể khi quay lại
-
-**Bước 1 — Đơn giản hóa worker:**
-- Bỏ `missing_variants`, `is_complete` khỏi consult State 2 call
-- Bỏ `missing_fields`, `all_fields_valid` khỏi consult-state3 call
-- Worker chỉ dùng output của LLM để route (confirmed_variants, exit, new_product_hint, order_confirmed)
-
-**Bước 2 — Viết lại prompt /consult (State 2) chất lượng cao:**
-- Pass `current_variants` + `required_variants` rõ ràng
-- Rule: "Đọc current_variants. Nếu field đã có → KHÔNG hỏi lại. Hỏi field còn thiếu."
-- Rule: "Khi current_variants đủ required_variants → tóm tắt + hỏi xác nhận"
-- Rule: "Chỉ dùng giá trị variant từ post content, không bịa"
-- Giữ nguyên: warmup/closing modes, handling complaints, persuasion
-
-**Bước 3 — Viết lại prompt /consult-state3 (State 3) chất lượng cao:**
-- Pass `existing_profile` đầy đủ
-- Rule: "Đọc existing_profile. Extract từ tin nhắn. Hỏi field còn thiếu/invalid."
-- Rule: "Nếu khách muốn đổi thứ gì → hỏi thứ đó, dù profile đã đầy đủ"
-- Rule: "Khi đủ 3 field valid → tóm tắt + hỏi confirm"
-- Giữ nguyên: cho đổi variants, gates (exit/new_product_hint)
-
-**Bước 4 — Test:**
-- Test State 2: không hỏi lại variant đã có, confirmed_variants set đúng
-- Test State 3: đổi địa chỉ được, tạo đơn với data cuối cùng
-
-**Bước 5 — Sau khi ổn:**
-- Commit toàn bộ Phase 7+8
-- Tích hợp niche detection vào crawl flow
-- Cron auto-crawl
+**Config đã có:**
+- `APP_URL=https://unemerged-paroxytonic-leda.ngrok-free.dev` ✅
+- Whitelist domain Messenger ✅ (set qua Graph API)
+- ngrok tunnel port **5173**, `LIMIT_CLOSING = 10`
 
 ---
 
-## Pending dài hạn
+## Pending — việc cần làm tiếp
 
-- Cron auto-crawl bài đăng mới định kỳ
-- Niche detection chạy tự động sau crawl
-- Merge về main
+1. **Commit** toàn bộ: `feat: state machine 4 states + webview form + 2-stage search`
+2. **Cron auto-crawl** — dùng `node-cron`, crawl định kỳ bài đăng mới
+3. **Niche filter** — State 0 check product_hint có khớp ngách fanpage không (tránh tư vấn SP không bán)
+4. **Niche detection** — tự động detect sau crawl, lưu vào `ai_page_settings.niche`
+5. **Merge về main**

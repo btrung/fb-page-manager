@@ -71,6 +71,31 @@ const InfoTab = ({ session, confirmationMessages, onIntentChange, onTagAdd, onTa
         </select>
       </div>
 
+      {/* AI State */}
+      {(() => {
+        const s = session;
+        let icon, label, color;
+        if (s.intent === 'Đã Chốt') {
+          icon = '🎉'; label = 'Đã chốt đơn'; color = 'bg-green-50 text-green-700 border-green-200';
+        } else if (s.variantConfirmed && s.profileConfirmAsked) {
+          icon = '✅'; label = 'Chờ xác nhận đơn'; color = 'bg-indigo-50 text-indigo-700 border-indigo-200';
+        } else if (s.variantConfirmed) {
+          icon = '📋'; label = 'Điền form giao hàng'; color = 'bg-purple-50 text-purple-700 border-purple-200';
+        } else if (s.productConfirmed) {
+          icon = '🎨'; label = 'Tư vấn & chọn mẫu'; color = 'bg-blue-50 text-blue-700 border-blue-200';
+        } else if (s.identifiedProduct) {
+          icon = '🎯'; label = 'Xác nhận sản phẩm'; color = 'bg-yellow-50 text-yellow-700 border-yellow-200';
+        } else {
+          icon = '🔍'; label = 'Tìm sản phẩm'; color = 'bg-gray-50 text-gray-500 border-gray-200';
+        }
+        return (
+          <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium border ${color}`}>
+            <span>{icon}</span>
+            <span>Giai đoạn: <strong>{label}</strong></span>
+          </div>
+        );
+      })()}
+
       {/* Mood */}
       {session.customerMood && session.customerMood !== 'neutral' && (
         <div className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium ${
@@ -232,14 +257,17 @@ const ChotTab = ({ order, confirmationMessages, onOrderAction, onRefresh }) => {
       <div className="bg-gray-50 rounded-xl p-3 space-y-1.5">
         <div className="text-xs text-gray-500 font-medium mb-2">📋 THÔNG TIN ĐƠN</div>
         {[
-          ['📦 SP',  order.productName],
-          ['👤 Tên', order.customerName],
-          ['📞 SĐT', order.phone],
-          ['📍 Địa', order.address],
-        ].map(([label, value]) => (
+          ['📦 SP',   order.productName],
+          ['🎨 Mẫu',  order.productVariants
+            ? Object.entries(order.productVariants).map(([k,v]) => `${k}: ${v}`).join(', ')
+            : null],
+          ['👤 Tên',  order.customerName],
+          ['📞 SĐT',  order.phone],
+          ['📍 Địa',  order.address],
+        ].filter(([,v]) => v).map(([label, value]) => (
           <div key={label} className="flex gap-2 text-xs">
             <span className="text-gray-400 w-14 shrink-0">{label}:</span>
-            <span className="text-gray-800">{value || '—'}</span>
+            <span className="text-gray-800">{value}</span>
           </div>
         ))}
       </div>
