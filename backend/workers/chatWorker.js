@@ -12,14 +12,18 @@ const axios = require('axios');
 const { Worker } = require('bullmq');
 const { getRedisConnection } = require('../queues/redisConnection');
 const chatDB = require('../db/chatDB');
-const { sendFbMessage, sendFbImage, sendFbImageWithCaption } = require('../utils/fbSendApi');
+const { sendFbMessage, sendFbImage, sendFbImageWithCaption, sendWebviewButton } = require('../utils/fbSendApi');
 
 const AI_URL = process.env.AI_SERVICE_URL || 'http://localhost:8000';
+
+// In-memory lock: tránh 2 job cùng session chạy song song
+const _processing = new Set();
 
 // Giới hạn lượt AI reply theo từng state
 const LIMIT_NO_PRODUCT  = 5;
 const LIMIT_UNCONFIRMED = 8;
-const LIMIT_CLOSING     = 5;
+const LIMIT_CONSULTING  = 10;
+const LIMIT_CLOSING     = 10;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -55,31 +59,96 @@ const isWithinActiveHours = (activeHours) => {
   return hhmm >= sH * 100 + sM && hhmm <= eH * 100 + eM;
 };
 
-// Tìm SP trong Qdrant, trả về enriched product object hoặc null
-const _searchProduct = async ({ session, query, imageUrl = null }) => {
+// Tìm SP: Stage 1 vector search → Stage 2 LLM rerank → trả về mảng kết quả
+const _searchProducts = async ({ session, query, imageUrl = null, topK = 3 }) => {
   try {
+    // Stage 1: vector search lấy top 5 (threshold thấp, LLM sẽ lọc)
     const result = await callAI('/generate-reply', {
       customer_message: query,
       page_id:          session.pageId,
       user_id:          session.userId,
       image_url:        imageUrl || null,
-      top_k:            1,
+      top_k:            5,
     });
-    const found = result.products?.[0];
-    if (!found) return null;
-    const p = found.payload || found;
-    return {
-      product: {
-        name:      p.product_name || query,
+
+    const rawList = result.products || [];
+    if (!rawList.length) return [];
+
+    const candidates = rawList.filter(f => (f.score || 0) >= 0.20);
+    if (!candidates.length) {
+      console.log('[CHAT WORKER] all scores too low:', (rawList[0]?.score || 0).toFixed(3), '| query:', query);
+      return [];
+    }
+
+    // Enrich với content từ DB
+    const enriched = await Promise.all(candidates.map(async (found, idx) => {
+      const p = found.payload || found;
+      const postId = p.post_id || null;
+      const postData = postId ? await chatDB.getPostContent(postId) : null;
+
+      const content = postData?.what_is_product || postData?.content || p.content || p.what_is_product || '';
+      const promotion = postData?.what_is_promotion || '';
+      const fullContent = promotion ? `${content}\nKhuyến mãi: ${promotion}` : content;
+      const imgUrl = p.image_url || result.product_images?.[0] || null;
+
+      return {
+        index:        idx,
+        product_name: p.product_name || query,
+        content:      fullContent,
+        price:        p.current_price || p.price || null,
+        imgUrl,
+        score:        found.score || 0,
         query,
-        price:     p.current_price || p.price || null,
-        image_url: result.product_images?.[0] || null,
-        content:   p.content || p.what_is_product || '',
-      },
-      imageUrl: result.product_images?.[0] || null,
-    };
-  } catch {
-    return null;
+      };
+    }));
+
+    // Stage 2: LLM rerank
+    const rerank = await callAI('/rerank-products', {
+      query,
+      candidates: enriched.map(e => ({
+        index:        e.index,
+        product_name: e.product_name,
+        content:      e.content,
+        price:        e.price,
+      })),
+    });
+    console.log('[CHAT WORKER] rerank:', JSON.stringify(rerank), '| query:', query);
+
+    if (rerank.best_index === -1 || rerank.confidence === 'low') return [];
+
+    const pickedIndices = rerank.confidence === 'high'
+      ? [rerank.best_index]
+      : (rerank.picked_indices?.length ? rerank.picked_indices : [rerank.best_index]);
+
+    // Detect variants chỉ cho các SP được chọn
+    const picked = await Promise.all(
+      pickedIndices.map(async (idx) => {
+        const e = enriched[idx];
+        if (!e) return null;
+        const variantsRes = await callAI('/detect-variants', {
+          product_name:    e.product_name,
+          product_content: e.content,
+          niche:           null,
+        }).catch(() => ({ required_variants: [] }));
+        return {
+          product: {
+            name:              e.product_name,
+            query:             e.query,
+            price:             e.price,
+            image_url:         e.imgUrl,
+            content:           e.content,
+            required_variants: variantsRes.required_variants || [],
+          },
+          imageUrl: e.imgUrl,
+          score:    e.score,
+        };
+      })
+    );
+
+    return picked.filter(Boolean);
+  } catch (err) {
+    console.error('[CHAT WORKER] _searchProducts error:', err.message);
+    return [];
   }
 };
 
@@ -101,10 +170,11 @@ const _sendAndSave = async ({ session, reply, intent = null, isConfirmationSumma
 // Gửi kịch bản chốt: ảnh SP (nếu có) + text
 const _sendClosingScript = async ({ session, identifiedProduct, aiSettings }) => {
   const { reply } = await callAI('/generate-closing', {
-    product_name:    identifiedProduct.name,
-    price:           identifiedProduct.price || null,
-    product_content: identifiedProduct.content || '',
-    reply_style:     aiSettings?.replyStyle || null,
+    product_name:       identifiedProduct.name,
+    price:              identifiedProduct.price || null,
+    product_content:    identifiedProduct.content || '',
+    required_variants:  identifiedProduct.required_variants || [],
+    reply_style:        aiSettings?.replyStyle || null,
   });
 
   if (identifiedProduct.image_url) {
@@ -121,7 +191,13 @@ const _sendClosingScript = async ({ session, identifiedProduct, aiSettings }) =>
 // ── Processor chính ───────────────────────────────────────────────────────────
 
 const processChatJob = async (job) => {
-  const { sessionId, messageId } = job.data;
+  const { sessionId } = job.data;
+
+  // Fix 3: tránh 2 job cùng session chạy song song → double reply
+  if (_processing.has(sessionId)) return { skipped: 'already_processing' };
+  _processing.add(sessionId);
+
+  try {
 
   // ── Guards cơ bản ──────────────────────────────────────────────────────────
   const session = await chatDB.getSessionById(sessionId);
@@ -134,21 +210,51 @@ const processChatJob = async (job) => {
     return { skipped: 'outside_active_hours' };
   }
 
-  const messages = await chatDB.getSessionMessages(sessionId, 20);
-
-  // Dùng đúng tin nhắn đã trigger job; fallback sang latest nếu không có messageId
-  let lastCustomer = messageId
-    ? await chatDB.getMessageById(messageId)
-    : null;
-  if (!lastCustomer || lastCustomer.senderType !== 'customer') {
-    lastCustomer = getLastCustomerMessage(messages);
+  // ── Reset state nếu khách im lặng quá 3 ngày ─────────────────────────────
+  // Tránh AI tiếp tục flow cũ khi khách quay lại sau thời gian dài
+  const SESSION_EXPIRE_DAYS = 3;
+  const lastMsgAt = session.lastMessageAt ? new Date(session.lastMessageAt) : null;
+  const daysSince = lastMsgAt ? (Date.now() - lastMsgAt.getTime()) / (1000 * 60 * 60 * 24) : 0;
+  if (daysSince > SESSION_EXPIRE_DAYS && session.identifiedProduct) {
+    await chatDB.updateSessionIntelligence(sessionId, {
+      identifiedProduct:   null,
+      productConfirmed:    false,
+      productVariants:     {},
+      variantConfirmed:    false,
+      profileConfirmAsked: false,
+      candidateProducts:   null,
+      noProductTurns:      0,
+      unconfirmedTurns:    0,
+      consultingTurns:     0,
+    });
+    console.log(`[CHAT WORKER] session ${sessionId} reset after ${daysSince.toFixed(1)} days idle`);
   }
-  if (!lastCustomer) return { skipped: 'no_customer_message' };
+
+  // ── Gom tất cả tin nhắn khách chưa được reply ─────────────────────────────
+  const unreplied = await chatDB.getUnrepliedCustomerMessages(sessionId);
+  if (!unreplied.length) return { skipped: 'no_customer_message' };
+
+  // Tin nhắn cuối cùng (dùng cho metadata: ảnh, messageId)
+  const lastCustomer = unreplied[unreplied.length - 1];
+
+  // Gom nội dung: nếu nhiều tin thì join lại để LLM hiểu đủ context
+  const combinedContent = unreplied
+    .map((m) => m.content || '')
+    .filter(Boolean)
+    .join('\n');
+
+  // Có ảnh trong bất kỳ tin nào không
+  const hasImage = unreplied.some((m) => (m.attachments || []).some((a) => a.type === 'image'));
+  const imageUrl = hasImage
+    ? unreplied.flatMap((m) => m.attachments || []).find((a) => a.type === 'image')?.url
+    : null;
+
+  console.log(`[CHAT WORKER] session=${sessionId} msgs=${unreplied.length} combined="${combinedContent.slice(0, 80)}"`);
 
   // ── Đọc trạng thái hiện tại ────────────────────────────────────────────────
   const {
-    identifiedProduct, productConfirmed,
-    noProductTurns, unconfirmedTurns, closingTurns,
+    identifiedProduct, productConfirmed, variantConfirmed,
+    noProductTurns, unconfirmedTurns, consultingTurns, closingTurns,
   } = session;
 
   // ── Kiểm tra DỪNG trước khi làm gì ────────────────────────────────────────
@@ -160,19 +266,18 @@ const processChatJob = async (job) => {
     await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
     return { skipped: 'dung_unconfirmed', turns: unconfirmedTurns };
   }
-  if (identifiedProduct && productConfirmed && closingTurns >= LIMIT_CLOSING) {
+  if (identifiedProduct && productConfirmed && !variantConfirmed && consultingTurns >= LIMIT_CONSULTING) {
+    await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
+    return { skipped: 'dung_consulting', turns: consultingTurns };
+  }
+  if (identifiedProduct && variantConfirmed && closingTurns >= LIMIT_CLOSING) {
     await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
     return { skipped: 'dung_closing', turns: closingTurns };
   }
 
-  // ── Phân tích tin nhắn mới nhất ────────────────────────────────────────────
-  const hasImage = (lastCustomer.attachments || []).some((a) => a.type === 'image');
-  const imageUrl = hasImage
-    ? (lastCustomer.attachments || []).find((a) => a.type === 'image')?.url
-    : null;
-
+  // ── Phân tích tin nhắn (dùng combinedContent) ─────────────────────────────
   const classify = await callAI('/classify-intent', {
-    message:   lastCustomer.content || '',
+    message:   combinedContent,
     has_image: hasImage,
   });
   console.log('[CHAT WORKER] classify:', JSON.stringify(classify), '| msg:', lastCustomer.content?.slice(0, 60));
@@ -182,21 +287,96 @@ const processChatJob = async (job) => {
   // STATE 0 — Chưa có identified_product
   // ════════════════════════════════════════════════════════════════════════════
   if (!identifiedProduct) {
-    if (has_product_signal && product_hint) {
-      const found = await _searchProduct({ session, query: product_hint, imageUrl });
-      if (found) {
+
+    // ── Khách đang chọn từ danh sách candidates đã gửi ──────────────────────
+    if (session.candidateProducts?.length > 0) {
+      const candidates = session.candidateProducts;
+      let picked = null;
+
+      // Match theo product_hint (tên SP trong câu trả lời)
+      if (product_hint) {
+        const hint = product_hint.toLowerCase();
+        picked = candidates.find(c => {
+          const name = c.product.name.toLowerCase();
+          return name.includes(hint) || hint.includes(name) ||
+            name.split(' ').some(w => w.length > 3 && hint.includes(w));
+        });
+      }
+
+      // Match theo số thứ tự ("1", "đầu", "một", "hai", "2"...)
+      if (!picked) {
+        const text = combinedContent.toLowerCase();
+        const idx = /\b(1|một|đầu|đầu tiên|thứ nhất|first)\b/.test(text) ? 0
+          : /\b(2|hai|thứ hai|second)\b/.test(text) ? 1
+          : /\b(3|ba|thứ ba|third)\b/.test(text) ? 2
+          : -1;
+        if (idx >= 0 && candidates[idx]) picked = candidates[idx];
+      }
+
+      if (picked) {
         await chatDB.updateSessionIntelligence(sessionId, {
-          identifiedProduct: found.product,
+          identifiedProduct:  picked.product,
+          candidateProducts:  null,
+          noProductTurns:     0,
+        });
+        await chatDB.updateSessionIntent(sessionId, 'Muốn Mua');
+        const { reply } = await callAI('/generate-product-confirm', { product_name: picked.product.name });
+        if (picked.imageUrl) await sendFbImage(session.pageId, session.customerPsid, picked.imageUrl);
+        await _sendAndSave({ session, reply });
+        return { handled: 'state0_candidate_picked', product: picked.product.name };
+      }
+
+      // Chưa chọn rõ → nhắc lại
+      const listText = candidates.map((c, i) => `${i + 1}. ${c.product.name}`).join('\n');
+      await _sendAndSave({ session, reply: `Anh/chị muốn xem mẫu nào ạ?\n${listText}` });
+      await chatDB.incrementCounter(sessionId, 'no_product_turns');
+      return { handled: 'state0_candidate_unclear' };
+    }
+
+    // ── Tìm SP mới ──────────────────────────────────────────────────────────
+    if (has_product_signal && product_hint) {
+      const found = await _searchProducts({ session, query: product_hint, imageUrl, topK: 3 });
+
+      if (found.length === 1) {
+        // Duy nhất 1 kết quả → confirm ngay
+        await chatDB.updateSessionIntelligence(sessionId, {
+          identifiedProduct: found[0].product,
           noProductTurns:    0,
         });
-        const { reply } = await callAI('/generate-product-confirm', {
-          product_name: found.product.name,
-        });
-        if (found.imageUrl) {
-          await sendFbImage(session.pageId, session.customerPsid, found.imageUrl);
-        }
+        await chatDB.updateSessionIntent(sessionId, 'Muốn Mua');
+        const { reply } = await callAI('/generate-product-confirm', { product_name: found[0].product.name });
+        if (found[0].imageUrl) await sendFbImage(session.pageId, session.customerPsid, found[0].imageUrl);
         await _sendAndSave({ session, reply });
-        return { handled: 'state0_product_found', product: found.product.name };
+        return { handled: 'state0_product_found', product: found[0].product.name };
+
+      } else if (found.length > 1) {
+        // Nhiều kết quả → gửi tất cả, hỏi chọn
+        await chatDB.updateSessionIntelligence(sessionId, {
+          candidateProducts: found,
+          noProductTurns:    0,
+        });
+        for (let i = 0; i < found.length; i++) {
+          const f = found[i];
+          const priceStr = f.product.price
+            ? `${Number(f.product.price).toLocaleString('vi-VN')}đ` : 'Liên hệ';
+          const msg = `SP ${i + 1}: ${f.product.name} — ${priceStr}`;
+          if (f.imageUrl) {
+            await sendFbImageWithCaption(session.pageId, session.customerPsid, f.imageUrl, msg);
+          } else {
+            await sendFbMessage(session.pageId, session.customerPsid, msg);
+          }
+        }
+        const options = found.map(f => f.product.name.slice(0, 20));
+        await sendQuickReplies(
+          session.pageId, session.customerPsid,
+          'Em thấy có mấy mẫu phù hợp, anh/chị muốn xem mẫu nào ạ?',
+          options,
+        );
+        await chatDB.updateSessionIntent(sessionId, 'Muốn Mua');
+        await chatDB.saveMessage({ sessionId, senderType: 'ai', content: '[Gợi ý nhiều sản phẩm]' });
+        await chatDB.incrementTurnCount(sessionId);
+        await chatDB.touchSession(sessionId);
+        return { handled: 'state0_multiple_candidates', count: found.length };
       }
     }
 
@@ -221,7 +401,8 @@ const processChatJob = async (job) => {
     // Khách từ chối SP hiện tại
     if (product_feedback === 'denied') {
       if (has_product_signal && product_hint) {
-        const found = await _searchProduct({ session, query: product_hint, imageUrl });
+        const _results = await _searchProducts({ session, query: product_hint, imageUrl });
+        const found = _results[0] || null;
         if (found) {
           // SP mới → reset unconfirmed_turns
           await chatDB.updateSessionIntelligence(sessionId, {
@@ -249,21 +430,25 @@ const processChatJob = async (job) => {
       return { handled: 'state1_denied_back_to_s0' };
     }
 
-    // Khách xác nhận SP → vào State 2 ngay
+    // Khách xác nhận SP → vào State 2, gửi closing script ngay
     if (product_feedback === 'confirmed' || message_intent === 'confirming') {
       await chatDB.updateSessionIntelligence(sessionId, {
         productConfirmed:  true,
         unconfirmedTurns:  0,
+        productVariants:   {},
+        variantConfirmed:  false,
+        consultingTurns:   0,
       });
-      await chatDB.updateSessionIntent(sessionId, 'Đang Chốt');
+      await chatDB.updateSessionIntent(sessionId, 'Đang Tư Vấn');
+      // Gửi closing script ngay: mark "đã reply" + mở đầu tư vấn
       await _sendClosingScript({ session, identifiedProduct, aiSettings });
-      await chatDB.incrementCounter(sessionId, 'closing_turns');
-      return { handled: 'state1_confirmed_closing' };
+      return { handled: 'state1_confirmed_enter_s2' };
     }
 
     // Khách hỏi SP khác (product_hint khác với SP hiện tại)
     if (has_product_signal && product_hint && product_hint !== identifiedProduct.query) {
-      const found = await _searchProduct({ session, query: product_hint, imageUrl });
+      const _results = await _searchProducts({ session, query: product_hint, imageUrl });
+      const found = _results[0] || null;
       if (found) {
         await chatDB.updateSessionIntelligence(sessionId, {
           identifiedProduct: found.product,
@@ -280,178 +465,225 @@ const processChatJob = async (job) => {
       }
     }
 
-    // Hỏi thêm về cùng SP → re-confirm
+    // Hỏi thêm về cùng SP → re-confirm (kèm ảnh để khách xem rõ)
     const { reply } = await callAI('/generate-product-confirm', {
       product_name: identifiedProduct.name,
     });
+    if (identifiedProduct.image_url) {
+      await sendFbImage(session.pageId, session.customerPsid, identifiedProduct.image_url);
+    }
     await _sendAndSave({ session, reply });
     await chatDB.incrementCounter(sessionId, 'unconfirmed_turns');
     return { handled: 'state1_reconfirm', turns: unconfirmedTurns + 1 };
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // STATE 2 — SP đã khoá → Thu thập thông tin & chốt đơn
+  // STATE 2 — SP đã khoá, chưa chốt biến thể → Tư vấn + Thuyết phục
   // ════════════════════════════════════════════════════════════════════════════
-  if (identifiedProduct && productConfirmed) {
+  if (identifiedProduct && productConfirmed && !variantConfirmed) {
 
-    // ── Gate 1: Khách đổi ý / từ chối SP ──────────────────────────────────
-    if (product_feedback === 'denied') {
-      await chatDB.updateSessionIntelligence(sessionId, {
-        productConfirmed:     false,
-        unconfirmedTurns:     0,
-        profileConfirmAsked:  false,
-      });
-      await chatDB.updateSessionIntent(sessionId, 'Đang Tư Vấn');
-      const { reply } = await callAI('/generate-product-confirm', { product_name: identifiedProduct.name });
-      if (identifiedProduct.image_url) {
-        await sendFbImage(session.pageId, session.customerPsid, identifiedProduct.image_url);
-      }
-      await _sendAndSave({ session, reply });
-      return { handled: 'state2_product_denied_back_s1' };
+    // ── Tư vấn + thu thập biến thể — worker tính routing, LLM lo reply ──
+    const currentVariants  = session.productVariants || {};
+    const requiredVariants = identifiedProduct.required_variants || [];
+    const missingVariants  = requiredVariants.filter((v) => !(v in currentVariants));
+    const isComplete       = missingVariants.length === 0;
+
+    const recentMsgs = await chatDB.getSessionMessages(sessionId, 6);
+    const conversationHistory = recentMsgs.map((m) => ({
+      role:    m.senderType === 'customer' ? 'customer' : 'ai',
+      content: m.content || '',
+    }));
+
+    const consult = await callAI('/consult', {
+      latest_message:       combinedContent,
+      product_name:         identifiedProduct.name,
+      product_content:      identifiedProduct.content || '',
+      niche:                aiSettings?.niche || null,
+      price:                identifiedProduct.price || null,
+      current_variants:     currentVariants,
+      missing_variants:     missingVariants,
+      is_complete:          isComplete,
+      conversation_history: conversationHistory,
+      reply_style:          aiSettings?.replyStyle || null,
+    });
+
+    const {
+      updated_variants, confirmed_variants,
+      exit: shouldExit, new_product_hint, reply: consultReply,
+    } = consult;
+    console.log('[CHAT WORKER] consult:', JSON.stringify({ isComplete, missingVariants, confirmed_variants, exit: shouldExit, new_product_hint }));
+
+    // Cập nhật variants
+    if (updated_variants && Object.keys(updated_variants).length > 0) {
+      await chatDB.updateSessionIntelligence(sessionId, { productVariants: updated_variants });
     }
 
-    if (has_product_signal && product_hint && product_hint !== identifiedProduct.query) {
-      const found = await _searchProduct({ session, query: product_hint, imageUrl });
+    // Khách muốn SP khác → search + về State 0
+    if (new_product_hint) {
+      const _results = await _searchProducts({ session, query: new_product_hint, imageUrl });
+      const found = _results[0] || null;
       if (found) {
         await chatDB.updateSessionIntelligence(sessionId, {
           identifiedProduct:   found.product,
           productConfirmed:    false,
           unconfirmedTurns:    0,
+          productVariants:     {},
+          variantConfirmed:    false,
           profileConfirmAsked: false,
         });
         await chatDB.updateSessionIntent(sessionId, 'Đang Tư Vấn');
         const { reply } = await callAI('/generate-product-confirm', { product_name: found.product.name });
         if (found.imageUrl) await sendFbImage(session.pageId, session.customerPsid, found.imageUrl);
         await _sendAndSave({ session, reply });
-        return { handled: 'state2_different_product', product: found.product.name };
+        return { handled: 'state2_switch_product', product: found.product.name };
       }
     }
 
-    // ── Gate 2: Xác nhận đơn đang chờ ─────────────────────────────────────
-    const existingOrder = await chatDB.getOrderBySession(sessionId);
-    if (existingOrder?.status === 'PENDING_REVIEW') {
-      if (message_intent === 'confirming' || product_feedback === 'confirmed') {
-        await chatDB.markCustomerConfirmed(sessionId, lastCustomer.id);
-        const reply = 'Dạ em đã ghi nhận đơn! Bộ phận giao hàng sẽ liên hệ xác nhận ạ 🎉';
-        await _sendAndSave({ session, reply });
-        await chatDB.updateSessionIntent(sessionId, 'Đã Chốt');
-        await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
-        return { handled: 'state2_order_confirmed' };
-      }
-      // Đơn chờ xác nhận, khách hỏi thêm → nhắc confirm
-      const reply = 'Dạ đơn đã được lập rồi ạ! Anh/chị nhắn "OK" để em xác nhận đặt hàng nhé 😊';
-      await _sendAndSave({ session, reply });
-      await chatDB.incrementCounter(sessionId, 'closing_turns');
-      return { handled: 'state2_waiting_confirmation' };
+    // Khách từ chối dứt khoát → HUMAN
+    if (shouldExit) {
+      await _sendAndSave({ session, reply: consultReply });
+      await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
+      return { handled: 'state2_exit_human' };
     }
 
-    // ── Default: Thu thập thông tin đặt hàng ──────────────────────────────
-    const PHONE_RE = /^(0|\+84)[0-9]{8,10}$/;
+    // Variants đủ + khách xác nhận → State 3
+    if (isComplete && confirmed_variants) {
+      await chatDB.updateSessionIntelligence(sessionId, {
+        variantConfirmed: true,
+        consultingTurns:  0,
+      });
+      await chatDB.updateSessionIntent(sessionId, 'Đang Chốt');
+      await _sendAndSave({ session, reply: consultReply });
+      return { handled: 'state2_variant_confirmed' };
+    }
 
-    const customerProfile = await chatDB.getCustomerProfile(session.customerPsid, session.pageId);
+    await _sendAndSave({ session, reply: consultReply });
+    await chatDB.incrementCounter(sessionId, 'consulting_turns');
+    return { handled: 'state2_consulting', isComplete, missingVariants };
+  }
 
-    // Có profile cũ và chưa hỏi xác nhận → hiện thông tin cũ và hỏi trước
-    if (customerProfile && !session.profileConfirmAsked) {
-      const profileLines = [
-        'Dạ bên em có lưu thông tin cũ của anh/chị ạ:',
-        `👤 Tên: ${customerProfile.name || '(chưa có)'}`,
-        `📞 SĐT: ${customerProfile.phone || '(chưa có)'}`,
-        `📍 Địa chỉ: ${customerProfile.address || '(chưa có)'}`,
-        '',
-        'Thông tin vẫn đúng ạ? Anh/chị nhắn "Đúng" để xác nhận, hoặc sửa thông tin nếu có thay đổi nhé! 😊',
-      ];
-      await _sendAndSave({ session, reply: profileLines.join('\n') });
+  // ════════════════════════════════════════════════════════════════════════════
+  // STATE 3 — Biến thể đã chốt → Lấy thông tin giao hàng (LLM-assisted)
+  // Worker tính missing_fields (deterministic) → LLM chỉ lo văn phong + extract
+  // KHÔNG tạo đơn cho đến khi khách confirm tóm tắt
+  // ════════════════════════════════════════════════════════════════════════════
+  if (identifiedProduct && variantConfirmed) {
+
+    // Bước 1: Chưa gửi webview button → gửi ngay
+    if (!session.profileConfirmAsked) {
+      const appUrl  = process.env.APP_URL || 'http://localhost:5000';
+      const formUrl = `${appUrl}/form/shipping?session=${sessionId}&page=${session.pageId}`;
+      await sendWebviewButton(
+        session.pageId,
+        session.customerPsid,
+        'Anh/chị điền thông tin để em chốt đơn nhé! 🛍️',
+        '📋 Điền thông tin giao hàng',
+        formUrl,
+      );
+      await chatDB.saveMessage({ sessionId, senderType: 'ai', content: '[Form điền thông tin giao hàng]' });
       await chatDB.updateSessionIntelligence(sessionId, { profileConfirmAsked: true });
-      await chatDB.incrementCounter(sessionId, 'closing_turns');
-      return { handled: 'state2_profile_confirm_asked' };
-    }
-
-    // Extract từ tin nhắn mới nhất
-    const extracted = await callAI('/extract-order-fields', { message: lastCustomer.content || '' });
-    console.log('[CHAT WORKER] extracted fields:', JSON.stringify(extracted));
-
-    // Merge: extracted > profile (field mới ghi đè field cũ)
-    const merged = {
-      name:    extracted.name    || customerProfile?.name    || null,
-      phone:   extracted.phone   || customerProfile?.phone   || null,
-      address: extracted.address || customerProfile?.address || null,
-    };
-
-    // Lưu ngay các trường vừa extract (partial upsert, không ghi đè null)
-    if (extracted.name || extracted.phone || extracted.address) {
-      await chatDB.upsertCustomerProfile({
-        customerPsid: session.customerPsid,
-        pageId:       session.pageId,
-        name:         extracted.name    || null,
-        phone:        extracted.phone   || null,
-        address:      extracted.address || null,
-      });
-    }
-
-    // Validate từng trường
-    const valid = {
-      name:    (merged.name?.trim()?.length ?? 0) >= 2,
-      phone:   !!(merged.phone && PHONE_RE.test(merged.phone.replace(/[\s-]/g, ''))),
-      address: (merged.address?.trim()?.length ?? 0) >= 10,
-    };
-
-    // Đủ cả 3 → gửi xác nhận + tạo đơn
-    if (valid.name && valid.phone && valid.address) {
-      const { reply: confirmReply } = await callAI('/generate-confirmation', {
-        product_name:  identifiedProduct.name,
-        price:         identifiedProduct.price || null,
-        customer_name: merged.name,
-        phone:         merged.phone,
-        address:       merged.address,
-      });
-      if (identifiedProduct.image_url) {
-        await sendFbImageWithCaption(
-          session.pageId, session.customerPsid,
-          identifiedProduct.image_url, confirmReply
-        );
-      } else {
-        await sendFbMessage(session.pageId, session.customerPsid, confirmReply);
-      }
-      const confirmMsg = await chatDB.saveMessage({
-        sessionId,
-        senderType:            'ai',
-        content:               confirmReply,
-        isConfirmationSummary: true,
-      });
-      await chatDB.createOrder({
-        sessionId,
-        customerName:             merged.name,
-        phone:                    merged.phone,
-        address:                  merged.address,
-        productName:              identifiedProduct.name,
-        confirmationSummaryMsgId: confirmMsg.id,
-      });
       await chatDB.incrementTurnCount(sessionId);
       await chatDB.touchSession(sessionId);
-      await chatDB.updateSessionIntent(sessionId, 'Đang Chốt');
-      return { handled: 'state2_confirmation_sent' };
+      return { handled: 'state3_webview_sent' };
     }
 
-    // Thiếu/sai trường → hỏi đúng field còn thiếu
-    let reply;
-    if (!valid.name && !valid.phone && !valid.address) {
-      reply = 'Anh/chị cho em xin tên, số điện thoại và địa chỉ giao hàng để em chốt đơn nhé! 📦';
-    } else if (!valid.phone && merged.phone) {
-      reply = 'Số điện thoại chưa đúng định dạng, anh/chị kiểm tra lại với em nhé!';
-    } else {
-      const missing = [];
-      if (!valid.name)    missing.push('tên');
-      if (!valid.phone)   missing.push('số điện thoại');
-      if (!valid.address) missing.push('địa chỉ giao hàng');
-      reply = `Dạ em còn thiếu ${missing.join(', ')} ạ, anh/chị bổ sung giúp em nhé! 😊`;
+    // Bước 2: Kiểm tra form đã submit chưa (form.js gửi isConfirmationSummary message)
+    const existingSummary = await chatDB.getLastConfirmationSummary(sessionId);
+
+    if (!existingSummary) {
+      // Escape: khách muốn SP khác → reset về State 0
+      if (has_product_signal && product_hint && product_hint.toLowerCase() !== identifiedProduct.name?.toLowerCase()) {
+        const _results = await _searchProducts({ session, query: product_hint, imageUrl });
+        const found = _results[0] || null;
+        if (found) {
+          await chatDB.updateSessionIntelligence(sessionId, {
+            identifiedProduct:   found.product,
+            productConfirmed:    false,
+            unconfirmedTurns:    0,
+            productVariants:     {},
+            variantConfirmed:    false,
+            profileConfirmAsked: false,
+          });
+          const { reply } = await callAI('/generate-product-confirm', { product_name: found.product.name });
+          if (found.imageUrl) await sendFbImage(session.pageId, session.customerPsid, found.imageUrl);
+          await _sendAndSave({ session, reply });
+          return { handled: 'state3_escape_new_product', product: found.product.name };
+        }
+      }
+
+      // Chưa submit → nhắc nhở
+      const nudge = 'Anh/chị điền form bên trên để em chốt đơn nhé! Có thắc mắc gì cứ hỏi em ạ 😊';
+      await _sendAndSave({ session, reply: nudge });
+      return { handled: 'state3_waiting_form' };
     }
 
+    // Bước 3: Form đã submit, chờ khách confirm
+    if (message_intent === 'confirming' || product_feedback === 'confirmed') {
+      const profile = await chatDB.getCustomerProfile(session.customerPsid, session.pageId);
+      const order   = await chatDB.createOrder({
+        sessionId,
+        customerName:             profile?.name    || '',
+        phone:                    profile?.phone   || '',
+        address:                  profile?.address || '',
+        productName:              identifiedProduct.name,
+        productVariants:          session.productVariants || null,
+        confirmationSummaryMsgId: existingSummary.id,
+      });
+      await chatDB.markCustomerConfirmed(sessionId, lastCustomer.id);
+      const reply = 'Dạ em đã ghi nhận đơn! Bộ phận giao hàng sẽ liên hệ xác nhận ạ 🎉';
+      await _sendAndSave({ session, reply });
+      await chatDB.updateSessionIntent(sessionId, 'Đã Chốt');
+      await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
+      return { handled: 'state3_order_confirmed', orderId: order.id };
+    }
+
+    // Escape: khách muốn SP khác dù đã điền form → reset về State 0
+    if (has_product_signal && product_hint && product_hint.toLowerCase() !== identifiedProduct.name?.toLowerCase()) {
+      const _results = await _searchProducts({ session, query: product_hint, imageUrl });
+      const found = _results[0] || null;
+      if (found) {
+        await chatDB.updateSessionIntelligence(sessionId, {
+          identifiedProduct:   found.product,
+          productConfirmed:    false,
+          unconfirmedTurns:    0,
+          productVariants:     {},
+          variantConfirmed:    false,
+          profileConfirmAsked: false,
+        });
+        const { reply } = await callAI('/generate-product-confirm', { product_name: found.product.name });
+        if (found.imageUrl) await sendFbImage(session.pageId, session.customerPsid, found.imageUrl);
+        await _sendAndSave({ session, reply });
+        return { handled: 'state3_escape_new_product_post_form', product: found.product.name };
+      }
+    }
+
+    // Khách muốn đổi thông tin → gửi lại form
+    const wantsChange = /đổi|sửa|thay|địa chỉ mới|khác/i.test(combinedContent);
+    if (wantsChange) {
+      const appUrl  = process.env.APP_URL || 'http://localhost:5000';
+      const formUrl = `${appUrl}/form/shipping?session=${sessionId}&page=${session.pageId}`;
+      await sendWebviewButton(
+        session.pageId, session.customerPsid,
+        'Anh/chị mở lại form để sửa thông tin nhé!',
+        '✏️ Sửa thông tin giao hàng',
+        formUrl,
+      );
+      await chatDB.saveMessage({ sessionId, senderType: 'ai', content: '[Form sửa thông tin giao hàng]' });
+      await chatDB.incrementTurnCount(sessionId);
+      return { handled: 'state3_reopen_form' };
+    }
+
+    // Tin khác → nhắc confirm
+    const reply = 'Anh/chị xác nhận đơn hàng bên trên nhé ạ! Nhắn "OK" để em ghi nhận 😊';
     await _sendAndSave({ session, reply });
     await chatDB.incrementCounter(sessionId, 'closing_turns');
-    return { handled: 'state2_collecting_info', valid };
+    return { handled: 'state3_nudge_confirm' };
   }
 
   return { handled: 'noop' };
+  } finally {
+    _processing.delete(sessionId);
+  }
 };
 
 // ── Worker factory ────────────────────────────────────────────────────────────

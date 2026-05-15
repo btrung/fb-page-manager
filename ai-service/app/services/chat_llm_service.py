@@ -323,36 +323,42 @@ async def generate_confirmation(order_info: dict) -> str:
 # Closing Script Generator
 # =============================================
 
-_CLOSING_SYSTEM = """Bạn là nhân viên bán hàng giỏi. Viết tin nhắn chốt đơn ngắn gọn, thuyết phục.
+_CLOSING_SYSTEM = """Bạn là nhân viên bán hàng giỏi. Khách vừa xác nhận muốn mua SP này.
+Viết tin nhắn mở đầu tư vấn: giới thiệu SP rõ ràng, tạo hứng thú, rồi hỏi TẤT CẢ biến thể trong 1 câu.
 
-Format BẮT BUỘC (giữ nguyên cấu trúc, không thêm bớt section):
+Format BẮT BUỘC:
 [Tên SP] — [Giá]
 • [Ưu điểm 1: lấy từ mô tả, cụ thể, không bịa]
 • [Ưu điểm 2: lấy từ mô tả, cụ thể, không bịa]
-[1 câu urgency: hàng hot / còn ít / giao ngay hôm nay / KM sắp hết...]
-Anh/chị cho em xin tên, SĐT và địa chỉ để em chốt đơn ngay nhé! 📦
+[1 câu urgency: hàng hot / còn ít / giao ngay hôm nay...]
+Anh/chị cho em biết [liệt kê TẤT CẢ biến thể cần hỏi] nhé ạ!
 
-Xưng "em", gọi "anh/chị". KHÔNG thêm gì ngoài format trên."""
+Xưng "em", gọi "anh/chị". Hỏi TẤT CẢ biến thể trong 1 câu duy nhất. KHÔNG hỏi tên/SĐT/địa chỉ ở bước này."""
 
 
 async def generate_closing_script(
     product_name: str,
     price: Optional[int],
     product_content: str,
+    required_variants: list = None,
     reply_style: Optional[str] = None,
 ) -> str:
-    """Tạo kịch bản chốt đơn: ảnh (gửi riêng) + text này."""
+    """Tin đầu tiên khi vào State 2: giới thiệu SP + hỏi variant đầu tiên."""
     system = _CLOSING_SYSTEM
     if reply_style:
         system += f"\nPhong cách shop: {reply_style}"
 
     price_str = f"{price:,}đ".replace(",", ".") if price else "liên hệ"
-    content = f"Tên SP: {product_name}\nGiá: {price_str}\nMô tả: {product_content[:400]}"
+    all_variants = ", ".join(required_variants) if required_variants else "size hoặc màu sắc phù hợp"
+    content = (
+        f"Tên SP: {product_name}\nGiá: {price_str}\nMô tả: {product_content[:400]}\n"
+        f"Tất cả biến thể cần hỏi (hỏi 1 lần): {all_variants}"
+    )
 
-    result = await _call_groq(system, content, max_tokens=200)
+    result = await _call_groq(system, content, max_tokens=250)
     return result or (
         f"{product_name} — {price_str}\n"
-        f"Anh/chị cho em xin tên, SĐT và địa chỉ để em chốt đơn ngay nhé! 📦"
+        f"Anh/chị cho em biết {all_variants} nhé ạ!"
     )
 
 
@@ -390,6 +396,381 @@ async def extract_order_fields(message: str) -> dict:
         }
     except Exception:
         return empty
+
+
+# =============================================
+# State 2 — Consultation + Persuasion
+# =============================================
+
+_CONSULT_SYSTEM = """Bạn là nhân viên tư vấn bán hàng. Khách đã xác nhận sản phẩm.
+
+=== NHIỆM VỤ CHÍNH ===
+Đọc tin nhắn khách → trả lời phù hợp → thực hiện đúng hành động bên dưới.
+
+=== QUY TẮC GIÁ TRỊ VARIANT ===
+Khi liệt kê size, màu, loại... → CHỈ dùng giá trị có trong mô_tả_bài_post
+KHÔNG bịa ra giá trị không có trong bài post. Nếu không biết → hỏi khách muốn gì
+
+=== HÀNH ĐỘNG THEO TRẠNG THÁI (do hệ thống cung cấp) ===
+
+Nếu còn_thiếu_variant KHÔNG rỗng:
+  → Trả lời khách (tư vấn/thuyết phục/xử lý phàn nàn...) theo phong cách:
+    - Warming up: phàn nàn/do dự/chê giá → làm hài lòng + CTA mềm
+    - Closing: hỏi size/màu/mua → ngắn gọn + tập trung
+  → Kết thúc reply bằng 1 câu hỏi TẤT CẢ variants trong còn_thiếu_variant cùng lúc
+    Ví dụ: "Anh/chị cho em biết size và màu nhé ạ!" (KHÔNG hỏi từng cái 1 lượt)
+  → Nếu bài post không có giá trị cụ thể → hỏi khách muốn gì
+
+Nếu còn_thiếu_variant RỖNG (đã đủ):
+  → Tóm tắt ngắn biến_thể_đã_có + hỏi "đúng chưa ạ?"
+  → Nếu khách vừa nói ok/đúng/được/xác nhận → confirmed_variants = true
+
+=== TRƯỜNG HỢP ĐẶC BIỆT ===
+new_product_hint: khách muốn SP khác hoàn toàn (không phải phàn nàn SP hiện tại)
+exit: khách từ chối dứt khoát
+
+=== OUTPUT JSON ===
+{
+  "updated_variants": {},
+  "confirmed_variants": false,
+  "exit": false,
+  "new_product_hint": null,
+  "reply": ""
+}
+
+Xưng "em", gọi "anh/chị". Chỉ trả về JSON thuần."""
+
+
+async def consult_state2(
+    latest_message: str,
+    product_name: str,
+    product_content: str,
+    niche: Optional[str],
+    price: Optional[int],
+    current_variants: dict,
+    missing_variants: list = None,
+    is_complete: bool = False,
+    conversation_history: list = None,
+    reply_style: Optional[str] = None,
+) -> dict:
+    """
+    State 2 — tư vấn + thu thập biến thể sản phẩm.
+    Trả về: {customer_signal, updated_variants, variants_complete, reply}
+    """
+    fallback = {
+        "updated_variants":   {},
+        "confirmed_variants": False,
+        "exit":               False,
+        "new_product_hint":   None,
+        "reply": "Dạ anh/chị cho em hỏi thêm thông tin để em chuẩn bị đơn cho chính xác nhé!",
+    }
+
+    price_str = f"{price:,}đ".replace(",", ".") if price else "liên hệ"
+    variants_str = json.dumps(current_variants, ensure_ascii=False) if current_variants else "{}"
+
+    system = _CONSULT_SYSTEM
+    if reply_style:
+        system += f"\n\nPhong cách shop: {reply_style}"
+
+    missing_str   = ", ".join(missing_variants) if missing_variants else ""
+    is_complete_str = "true" if is_complete else "false"
+
+    history_str = ""
+    if conversation_history:
+        lines = []
+        for m in conversation_history[-6:]:
+            role = "Khách" if m.get("role") == "customer" else "AI"
+            lines.append(f"[{role}]: {m.get('content', '')[:150]}")
+        history_str = "\n".join(lines)
+
+    user_content = (
+        f"=== THÔNG TIN SẢN PHẨM ===\n"
+        f"Sản phẩm: {product_name} | Giá: {price_str} | Ngách: {niche or 'chưa xác định'}\n"
+        f"mô_tả_bài_post: {product_content[:400]}\n\n"
+        f"=== TRẠNG THÁI BIẾN THỂ (do hệ thống tính) ===\n"
+        f"biến_thể_đã_có: {variants_str}\n"
+        f"còn_thiếu_variant: [{missing_str}]  ← HỎI ĐÚNG CÁI NÀY, không hỏi cái khác\n"
+        f"đã_đủ_variant: {is_complete_str}\n\n"
+        f"=== LỊCH SỬ 6 TIN GẦN NHẤT ===\n"
+        f"{history_str}\n\n"
+        f"=== TIN NHẮN KHÁCH VỪA GỬI ===\n"
+        f"{latest_message}"
+    )
+
+    result = await _call_groq(system, user_content, max_tokens=350)
+    if not result:
+        return fallback
+
+    try:
+        start = result.find("{")
+        end = result.rfind("}") + 1
+        parsed = json.loads(result[start:end])
+
+        valid_signals = {
+            "providing_info", "ask_price", "ask_detail",
+            "objection_price", "complaint", "hesitating",
+            "off_topic", "confirming", "negative",
+        }
+        signal = parsed.get("customer_signal", "off_topic")
+        if signal not in valid_signals:
+            signal = "off_topic"
+
+        updated = {**current_variants, **(parsed.get("updated_variants") or {})}
+
+        return {
+            "updated_variants":   updated,
+            "confirmed_variants": bool(parsed.get("confirmed_variants", False)),
+            "exit":               bool(parsed.get("exit", False)),
+            "new_product_hint":   parsed.get("new_product_hint") or None,
+            "reply":              parsed.get("reply") or fallback["reply"],
+        }
+    except Exception:
+        return fallback
+
+
+# =============================================
+# Variant Detector — xác định biến thể cần hỏi
+# =============================================
+
+_DETECT_VARIANTS_SYSTEM = """Dựa vào thông tin sản phẩm và ngách kinh doanh, xác định các trường biến thể cần hỏi khách để giao hàng đúng.
+
+Trả về JSON: {"required_variants": ["size", "màu", ...]}
+
+Quy tắc:
+- Chỉ liệt kê trường THỰC SỰ cần thiết cho sản phẩm này
+- Dùng tên tiếng Việt ngắn gọn: "size", "màu", "form", "dung tích", "loại da", "số lượng"...
+- Nếu SP không có biến thể đặc biệt → trả về []
+- Tối đa 4 trường
+- Dựa vào nội dung bài post + kiến thức về ngách để quyết định
+
+Ví dụ:
+- Áo thun → ["size", "màu"]
+- Áo khoác → ["size", "màu", "form"]
+- Kem dưỡng da → ["dung tích", "loại da"]
+- Đồ ăn → ["số lượng", "lưu ý khẩu vị"]
+
+Chỉ trả về JSON thuần."""
+
+
+async def detect_variants(
+    product_name: str,
+    product_content: str,
+    niche: Optional[str],
+) -> list[str]:
+    """Xác định các trường biến thể cần thu thập cho sản phẩm này."""
+    user_content = (
+        f"Ngách: {niche or 'chưa xác định'}\n"
+        f"Tên SP: {product_name}\n"
+        f"Nội dung bài post: {product_content[:500]}"
+    )
+    result = await _call_groq(_DETECT_VARIANTS_SYSTEM, user_content, max_tokens=80)
+    if not result:
+        return []
+    try:
+        start = result.find("{")
+        end = result.rfind("}") + 1
+        parsed = json.loads(result[start:end])
+        variants = parsed.get("required_variants", [])
+        return [v for v in variants if isinstance(v, str)][:4]
+    except Exception:
+        return []
+
+
+# =============================================
+# State 3 — Thu thập thông tin giao hàng
+# =============================================
+
+_CONSULT_STATE3_SYSTEM = """Bạn là nhân viên xác nhận đơn hàng. Khách đã chọn xong sản phẩm và biến thể.
+
+NHIỆM VỤ:
+1. Trích xuất tên, SĐT, địa chỉ từ tin nhắn khách (nếu có đề cập)
+2. Xử lý tâm lý khách tự nhiên (nếu hỏi thêm, do dự, đổi ý...)
+3. Cho phép đổi biến thể, đổi thông tin bất kỳ lúc nào trước khi xác nhận
+
+QUY TẮC HÀNH ĐỘNG (theo trạng thái hệ thống cung cấp):
+- thông_tin_còn_thiếu KHÔNG rỗng → xử lý khách + hỏi field đầu tiên trong danh sách, 1 field/lượt
+- đã_đủ_thông_tin = true → tóm tắt thông tin + hỏi "đúng chưa ạ?"
+- Khách xác nhận tóm tắt (ok/đúng/được) → order_confirmed = true
+
+GATE:
+- updated_variants: khách muốn đổi size/màu/biến thể
+- new_product_hint: khách muốn đổi SP khác hoàn toàn
+- exit: từ chối không mua nữa
+
+Trả về JSON:
+{
+  "extracted": {"name": null, "phone": null, "address": null},
+  "updated_variants": null,
+  "order_confirmed": false,
+  "new_product_hint": null,
+  "exit": false,
+  "reply": "..."
+}
+
+Chỉ trả về JSON thuần, không giải thích."""
+
+
+async def consult_state3(
+    latest_message: str,
+    product_name: str,
+    product_variants: dict,
+    existing_profile: Optional[dict],
+    missing_fields: list = None,
+    all_fields_valid: bool = False,
+    reply_style: Optional[str] = None,
+) -> dict:
+    """State 3 — LLM extract + generate reply, worker đã tính missing_fields."""
+    fallback = {
+        "extracted": {"name": None, "phone": None, "address": None},
+        "updated_variants": None,
+        "order_confirmed": False,
+        "new_product_hint": None,
+        "exit": False,
+        "reply": "Dạ anh/chị cho em xin tên, số điện thoại và địa chỉ giao hàng nhé!",
+    }
+
+    variants_str = json.dumps(product_variants, ensure_ascii=False) if product_variants else "{}"
+    profile_str = (
+        f"Tên: {existing_profile.get('name') or '(chưa có)'}, "
+        f"SĐT: {existing_profile.get('phone') or '(chưa có)'}, "
+        f"Địa chỉ: {existing_profile.get('address') or '(chưa có)'}"
+    ) if existing_profile else "Chưa có thông tin cũ"
+
+    missing_str = ", ".join(missing_fields) if missing_fields else ""
+    all_valid_str = "true" if all_fields_valid else "false"
+
+    system = _CONSULT_STATE3_SYSTEM
+    if reply_style:
+        system += f"\n\nPhong cách shop: {reply_style}"
+
+    user_content = (
+        f"=== THÔNG TIN ĐƠN HÀNG ===\n"
+        f"Sản phẩm: {product_name}\n"
+        f"Biến thể đã chọn: {variants_str}\n\n"
+        f"=== TRẠNG THÁI THÔNG TIN GIAO HÀNG (do hệ thống tính) ===\n"
+        f"thông_tin_hiện_có: {profile_str}\n"
+        f"thông_tin_còn_thiếu: [{missing_str}]  ← HỎI ĐÚNG CÁI NÀY, 1 field/lượt\n"
+        f"đã_đủ_thông_tin: {all_valid_str}\n\n"
+        f"=== TIN NHẮN KHÁCH VỪA GỬI ===\n"
+        f"{latest_message}"
+    )
+
+    result = await _call_groq(system, user_content, max_tokens=250)
+    if not result:
+        return fallback
+
+    try:
+        start = result.find("{")
+        end = result.rfind("}") + 1
+        parsed = json.loads(result[start:end])
+        extracted = parsed.get("extracted") or {}
+        uv = parsed.get("updated_variants")
+        return {
+            "extracted": {
+                "name":    extracted.get("name") or None,
+                "phone":   extracted.get("phone") or None,
+                "address": extracted.get("address") or None,
+            },
+            "updated_variants": uv if isinstance(uv, dict) and uv else None,
+            "order_confirmed":  bool(parsed.get("order_confirmed", False)),
+            "new_product_hint": parsed.get("new_product_hint") or None,
+            "exit":             bool(parsed.get("exit", False)),
+            "reply":            parsed.get("reply") or fallback["reply"],
+        }
+    except Exception:
+        return fallback
+
+
+# =============================================
+# Product Re-ranker — LLM chọn SP phù hợp nhất từ candidates
+# =============================================
+
+_RERANK_SYSTEM = """Bạn là AI tìm sản phẩm. Khách hỏi mua hàng, bạn cần chọn sản phẩm phù hợp nhất từ danh sách tìm được.
+
+Trả về JSON:
+{
+  "best_index": 0,
+  "picked_indices": [0],
+  "confidence": "high"
+}
+
+Quy tắc:
+- best_index: index (0-based) của SP phù hợp nhất. -1 nếu không SP nào phù hợp.
+- picked_indices: danh sách index nếu nhiều SP đều phù hợp để hỏi khách chọn (tối đa 3)
+- confidence:
+    "high"   → rõ ràng chỉ 1 SP phù hợp
+    "medium" → 2-3 SP đều có thể, nên hỏi khách
+    "low"    → không có SP nào thực sự phù hợp → best_index = -1
+
+So sánh dựa trên: tên SP, mô tả, loại hàng, giá. Ưu tiên khớp tên > khớp loại.
+Chỉ trả về JSON thuần, không giải thích."""
+
+
+async def rerank_products(query: str, candidates: list[dict]) -> dict:
+    """
+    Stage 2 — LLM chọn SP phù hợp nhất từ kết quả vector search.
+    candidates: [{index, product_name, content, price}]
+    """
+    fallback = {"best_index": 0, "picked_indices": [0], "confidence": "high"}
+    if not candidates:
+        return {"best_index": -1, "picked_indices": [], "confidence": "low"}
+    if len(candidates) == 1:
+        return fallback
+
+    lines = []
+    for c in candidates:
+        price_str = f"{c['price']:,}đ".replace(",", ".") if c.get("price") else "liên hệ"
+        lines.append(
+            f"[{c['index']}] {c['product_name']} — {price_str}\n"
+            f"    Mô tả: {str(c.get('content', ''))[:200]}"
+        )
+
+    user_content = f"Khách hỏi: \"{query}\"\n\nCác sản phẩm tìm được:\n" + "\n".join(lines)
+    result = await _call_groq(_RERANK_SYSTEM, user_content, max_tokens=80)
+
+    if not result:
+        return fallback
+
+    try:
+        start = result.find("{")
+        end = result.rfind("}") + 1
+        parsed = json.loads(result[start:end])
+        return {
+            "best_index":    int(parsed.get("best_index", 0)),
+            "picked_indices": [int(x) for x in parsed.get("picked_indices", [0])],
+            "confidence":    parsed.get("confidence", "high"),
+        }
+    except Exception:
+        return fallback
+
+
+# =============================================
+# Niche Detector (chạy sau crawl)
+# =============================================
+
+_NICHE_SYSTEM = """Phân tích các bài đăng của fanpage và xác định ngách kinh doanh chính.
+Trả về JSON: {"niche": "<ngách>"}
+Ngách phải ngắn gọn, 1-3 từ tiếng Việt. Ví dụ: "thời trang", "mỹ phẩm", "đồ ăn", "phụ kiện điện thoại", "đồ gia dụng".
+Chỉ trả về JSON thuần."""
+
+
+async def detect_niche(post_samples: list[str]) -> str:
+    """Xác định ngách fanpage từ danh sách nội dung bài đăng mẫu."""
+    if not post_samples:
+        return "chưa xác định"
+
+    content = "Các bài đăng mẫu:\n" + "\n---\n".join(post_samples[:10])
+    result = await _call_groq(_NICHE_SYSTEM, content, max_tokens=50)
+    if not result:
+        return "chưa xác định"
+
+    try:
+        start = result.find("{")
+        end = result.rfind("}") + 1
+        parsed = json.loads(result[start:end])
+        return parsed.get("niche") or "chưa xác định"
+    except Exception:
+        return "chưa xác định"
 
 
 # =============================================

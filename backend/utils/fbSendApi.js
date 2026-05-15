@@ -67,4 +67,50 @@ const sendFbImageWithCaption = async (pageId, recipientPsid, imageUrl, text) => 
   return sendFbMessage(pageId, recipientPsid, text);
 };
 
-module.exports = { sendFbMessage, sendFbImage, sendFbImageWithCaption };
+/**
+ * Gửi button mở webview bên trong Messenger
+ * Dùng cho form điền thông tin giao hàng / chọn biến thể
+ */
+const sendWebviewButton = async (pageId, recipientPsid, text, buttonTitle, webviewUrl) => {
+  const token = await _getPageToken(pageId);
+  return _fbPost(token, {
+    recipient: { id: recipientPsid },
+    message: {
+      attachment: {
+        type: 'template',
+        payload: {
+          template_type: 'button',
+          text,
+          buttons: [{
+            type:                 'web_url',
+            url:                  webviewUrl,
+            title:                buttonTitle,
+            messenger_extensions: true,
+            webview_height_ratio: 'tall',
+          }],
+        },
+      },
+    },
+  });
+};
+
+/**
+ * Gửi quick replies (các lựa chọn nhấn nhanh)
+ * Dùng cho chọn size, màu sắc...
+ */
+const sendQuickReplies = async (pageId, recipientPsid, text, options) => {
+  const token = await _getPageToken(pageId);
+  return _fbPost(token, {
+    recipient: { id: recipientPsid },
+    message: {
+      text,
+      quick_replies: options.slice(0, 13).map((opt) => ({
+        content_type: 'text',
+        title:        String(opt).slice(0, 20),
+        payload:      String(opt).toUpperCase().replace(/\s+/g, '_').slice(0, 1000),
+      })),
+    },
+  });
+};
+
+module.exports = { sendFbMessage, sendFbImage, sendFbImageWithCaption, sendWebviewButton, sendQuickReplies };

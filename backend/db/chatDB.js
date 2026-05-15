@@ -95,7 +95,8 @@ const _SESSION_COLS = `
   profile_confirm_asked AS "profileConfirmAsked",
   product_variants AS "productVariants",
   variant_confirmed AS "variantConfirmed",
-  consulting_turns AS "consultingTurns"`;
+  consulting_turns AS "consultingTurns",
+  candidate_products AS "candidateProducts"`;
 
 const getOrCreateSession = async ({ pageId, userId, customerPsid, customerName, customerAvatar }) => {
   const { rows: existing } = await pool.query(
@@ -145,6 +146,10 @@ const getSessionsByUser = async (userId, { intentFilter, aiModeFilter } = {}) =>
            s.identified_product AS "identifiedProduct",
            s.customer_mood AS "customerMood",
            s.product_confirmed AS "productConfirmed",
+           s.product_variants AS "productVariants",
+           s.variant_confirmed AS "variantConfirmed",
+           s.profile_confirm_asked AS "profileConfirmAsked",
+           s.consulting_turns AS "consultingTurns",
            s.no_product_turns AS "noProductTurns",
            s.unconfirmed_turns AS "unconfirmedTurns",
            s.closing_turns AS "closingTurns",
@@ -284,6 +289,15 @@ const updateSessionIntelligence = async (sessionId, updates = {}) => {
     sets.push(`consulting_turns = $${i}`);
     params.push(updates.consultingTurns ?? 0);
     i++;
+  }
+  if ('candidateProducts' in updates) {
+    if (updates.candidateProducts === null) {
+      sets.push(`candidate_products = NULL`);
+    } else {
+      sets.push(`candidate_products = $${i}::jsonb`);
+      params.push(JSON.stringify(updates.candidateProducts));
+      i++;
+    }
   }
 
   if (!sets.length) return;
@@ -493,6 +507,7 @@ const getOrderBySession = async (sessionId) => {
   const { rows } = await pool.query(
     `SELECT id, session_id AS "sessionId", customer_name AS "customerName",
             phone, address, product_name AS "productName", note, status,
+            product_variants AS "productVariants",
             confirmation_summary_msg_id AS "confirmationSummaryMsgId",
             customer_confirmed_msg_id AS "customerConfirmedMsgId",
             customer_confirmed_at AS "customerConfirmedAt",

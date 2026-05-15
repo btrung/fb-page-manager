@@ -9,7 +9,7 @@ Router /chat — LLM endpoints cho AI Chat feature
   POST /chat/search-by-image       — tìm sản phẩm theo ảnh khách gửi
 """
 import logging
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -24,6 +24,11 @@ from app.services.chat_llm_service import (
     generate_confirmation,
     extract_order_info,
     extract_order_fields,
+    consult_state2,
+    consult_state3,
+    detect_variants,
+    detect_niche,
+    rerank_products,
 )
 from app.services.embedding_service import embedding_service
 from app.services.image_embedding_service import image_embedding_service
@@ -252,6 +257,7 @@ class GenerateClosingRequest(BaseModel):
     product_name: str
     price: Optional[int] = None
     product_content: str = ""
+    required_variants: list = []
     reply_style: Optional[str] = None
 
 
@@ -261,6 +267,7 @@ async def api_generate_closing(body: GenerateClosingRequest):
         body.product_name,
         body.price,
         body.product_content,
+        body.required_variants,
         body.reply_style,
     )
     return {"reply": reply}
@@ -316,6 +323,102 @@ async def api_extract_order_fields(body: ExtractOrderFieldsRequest):
 
 
 # =============================================
+# POST /chat/consult
+# State 2 — tư vấn + thu thập biến thể SP
+# =============================================
+
+class ConsultRequest(BaseModel):
+    latest_message: str
+    product_name: str
+    product_content: str = ""
+    niche: Optional[str] = None
+    price: Optional[int] = None
+    current_variants: dict = {}
+    missing_variants: list = []
+    is_complete: bool = False
+    conversation_history: list = []
+    reply_style: Optional[str] = None
+
+
+@router.post("/consult")
+async def api_consult(body: ConsultRequest):
+    result = await consult_state2(
+        latest_message=body.latest_message,
+        product_name=body.product_name,
+        product_content=body.product_content,
+        niche=body.niche,
+        price=body.price,
+        current_variants=body.current_variants,
+        missing_variants=body.missing_variants,
+        is_complete=body.is_complete,
+        conversation_history=body.conversation_history,
+        reply_style=body.reply_style,
+    )
+    return result
+
+
+# =============================================
+# POST /chat/detect-variants
+# Xác định biến thể cần hỏi cho sản phẩm
+# =============================================
+
+class DetectVariantsRequest(BaseModel):
+    product_name: str
+    product_content: str = ""
+    niche: Optional[str] = None
+
+
+@router.post("/detect-variants")
+async def api_detect_variants(body: DetectVariantsRequest):
+    variants = await detect_variants(body.product_name, body.product_content, body.niche)
+    return {"required_variants": variants}
+
+
+# =============================================
+# POST /chat/consult-state3
+# State 3 — thu thập thông tin giao hàng
+# =============================================
+
+class ConsultState3Request(BaseModel):
+    latest_message: str
+    product_name: str
+    product_variants: dict = {}
+    existing_profile: Optional[dict] = None
+    missing_fields: list = []
+    all_fields_valid: bool = False
+    reply_style: Optional[str] = None
+
+
+@router.post("/consult-state3")
+async def api_consult_state3(body: ConsultState3Request):
+    result = await consult_state3(
+        latest_message=body.latest_message,
+        product_name=body.product_name,
+        product_variants=body.product_variants,
+        existing_profile=body.existing_profile,
+        missing_fields=body.missing_fields,
+        all_fields_valid=body.all_fields_valid,
+        reply_style=body.reply_style,
+    )
+    return result
+
+
+# =============================================
+# POST /chat/detect-niche
+# Xác định ngách fanpage từ các bài đăng mẫu
+# =============================================
+
+class DetectNicheRequest(BaseModel):
+    post_samples: list[str]
+
+
+@router.post("/detect-niche")
+async def api_detect_niche(body: DetectNicheRequest):
+    niche = await detect_niche(body.post_samples)
+    return {"niche": niche}
+
+
+# =============================================
 # POST /chat/search-by-image
 # Dùng khi khách gửi ảnh sản phẩm
 # =============================================
@@ -333,3 +436,27 @@ async def api_search_by_image(body: SearchByImageRequest):
         top_k=body.top_k,
     )
     return {"results": results, "total": len(results)}
+
+
+# =============================================
+# POST /chat/rerank-products
+# Stage 2: LLM chọn SP phù hợp nhất từ vector search candidates
+# =============================================
+
+class RerankCandidate(BaseModel):
+    index: int
+    product_name: str
+    content: str = ""
+    price: Optional[int] = None
+
+class RerankRequest(BaseModel):
+    query: str
+    candidates: List[RerankCandidate]
+
+@router.post("/rerank-products")
+async def api_rerank_products(body: RerankRequest):
+    result = await rerank_products(
+        query=body.query,
+        candidates=[c.dict() for c in body.candidates],
+    )
+    return result

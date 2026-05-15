@@ -29,6 +29,11 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/form': {
+        target: BACKEND_URL,
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 });
