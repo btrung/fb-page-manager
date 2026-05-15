@@ -42,56 +42,62 @@ docker compose logs -f worker           # xem log realtime
 Crawl bài đăng Facebook → LLM extract → embed vào Qdrant.
 
 ### 2. AI Chat (`/chat` — ChatPage)
-AI tự động chat + chốt đơn qua Facebook Messenger. **Đang phát triển tích cực.**
+AI tự động chat + chốt đơn qua Facebook Messenger. **Đã hoạt động, đang fix & user test.**
 
 ### 3. Cài đặt (`/settings` — SettingsPage)
 Toggle AI per fanpage + active hours + reply_style.
 
----
-
-## Branch hiện tại: `chat-interface`
-
-### Trạng thái git
-Có nhiều uncommitted changes — **CHƯA COMMIT** toàn bộ Phase 7 + Phase 8 (state machine mới).
-Cần test đủ rồi mới commit.
-
-### Files chưa commit quan trọng
-- `backend/workers/chatWorker.js` — **core logic, thay đổi nhiều nhất**
-- `backend/db/chatDB.js`
-- `backend/db/schema.sql`
-- `backend/queues/chatQueue.js`
-- `ai-service/app/routers/chat.py`
-- `ai-service/app/services/chat_llm_service.py`
-- `Logic-Feature.md/CHAT_FEATURE.md`
+### 4. Livestream Reply (`/livestream` — LivestreamPage) ← ĐANG PHÁT TRIỂN
+AI monitor comment livestream → reply buying intent → drive vào Messenger chat.
 
 ---
 
-## AI Chat — State Machine 4 States
+## Trạng thái Branches (2026-05-15)
 
-**Đọc `Logic-Feature.md/CHAT_FEATURE.md` để hiểu toàn bộ design chi tiết.**
+```
+main              ──── 8b9f313  (cũ, stable, chưa merge gì mới)
+chat-interface    ──── bcd3137  (đã commit đủ, đang user test + fix bugs)
+                                    \
+livestream-reply  ──── bf1a3e4  (mới tạo, chỉ có design doc, chưa code)
+```
+
+**Quy tắc:**
+- Fix bug chat → commit vào `chat-interface`
+- Code livestream → commit vào `livestream-reply`
+- Sync định kỳ: `git merge chat-interface` vào `livestream-reply` khi chat có fix lớn
+- Merge vào `main` sau khi cả 2 ổn định
+
+**Tất cả code đã commit sạch** — không còn uncommitted changes quan trọng.
+
+---
+
+## AI Chat — State Machine 4 States (ĐÃ HOẠT ĐỘNG)
+
+**Chi tiết đầy đủ: `Logic-Feature.md/CHAT_FEATURE.md`**
 
 ```
 STATE 0 — Tìm SP (max 5 lượt)
-  → search Qdrant, confidence threshold 0.45
-  → joking → probe, other → hỏi SP
+  Stage 1: Qdrant vector search top 5 (threshold 0.20)
+  Stage 2: LLM /rerank-products → chọn SP phù hợp nhất
+  → high confidence: confirm ngay, set intent "Muốn Mua"
+  → medium: gửi 2-3 SP + quick_replies hỏi chọn (lưu candidate_products)
+  → low / không tìm thấy: hỏi lại
 
 STATE 1 — Xác nhận SP (max 8 lượt)
-  → confirmed → gửi closing script + vào State 2
+  → confirmed → gửi closing script (ảnh + info + hỏi all variants) → State 2
   → denied → về State 0
 
 STATE 2 — Tư vấn + Biến thể (max 10 lượt)
-  Worker tính: missing = required_variants - keys(current_variants)
-               is_complete = missing.length === 0
-  LLM (/consult): nhận missing_variants + is_complete + history 6 tin
-    → is_complete=false: tư vấn/thuyết phục + hỏi missing[0]
-    → is_complete=true: tóm tắt variants + hỏi xác nhận
-  Routing: new_product_hint→S0, exit→HUMAN, is_complete+confirmed→S3
+  Worker tính missing_variants → LLM hỏi TẤT CẢ trong 1 câu
+  → is_complete + confirmed → State 3
 
-STATE 3 — Thông tin giao hàng (max 5 lượt)
-  LLM (/consult-state3): extract name/phone/address + cho đổi variants
-  Nguyên tắc: KHÔNG tạo đơn cho đến khi khách confirm tóm tắt
-  → Đủ 3 trường → gửi summary (chưa tạo đơn)
-  → Khách confirm → createOrder với data cuối cùng → HUMAN
+STATE 3 — Webview Form giao hàng (max 10 lượt)
+  → Gửi button mở form HTML trong Messenger
+  → Form: tên SP + giá locked + variants editable + name/SĐT/địa chỉ
+  → Submit → save profile → gửi confirmation summary
+  → Khách confirm "OK" → createOrder → HUMAN mode
+
+Chung: session idle >3 ngày → auto reset state 0
 ```
 
 ---
@@ -101,14 +107,13 @@ STATE 3 — Thông tin giao hàng (max 5 lượt)
 | Endpoint | Dùng khi |
 |---|---|
 | `/chat/classify-intent` | Mọi tin nhắn — phân loại intent |
-| `/chat/generate-reply` | State 0 — tìm SP qua Qdrant |
+| `/chat/generate-reply` | State 0 — tìm SP qua Qdrant (trả top 5) |
+| `/chat/rerank-products` | State 0 — LLM chọn SP phù hợp nhất từ candidates |
 | `/chat/generate-product-confirm` | State 0/1 — hỏi xác nhận SP |
-| `/chat/generate-closing` | State 1→2 — opening message hỏi variant đầu |
+| `/chat/generate-closing` | State 1→2 — opening message hỏi all variants |
 | `/chat/detect-variants` | Khi tìm được SP — xác định variants cần hỏi |
 | `/chat/consult` | State 2 — tư vấn + fill variants |
-| `/chat/consult-state3` | State 3 — thu thập thông tin giao hàng |
 | `/chat/generate-confirmation` | State 3 — tạo summary xác nhận đơn |
-| `/chat/extract-order-fields` | State 3 — extract name/phone/address |
 | `/chat/detect-niche` | Sau crawl — xác định ngách fanpage |
 | `/chat/generate-probe` | State 0 — redirect khách đùa |
 
@@ -123,7 +128,6 @@ product_variants      JSONB     -- variants đang thu thập {size:M, màu:xanh}
 variant_confirmed     BOOLEAN   -- State 2 xong → State 3
 no_product_turns      INT       -- counter State 0 (max 5)
 unconfirmed_turns     INT       -- counter State 1 (max 8)
-consulting_turns      INT       -- counter State 2 (max 10)
 consulting_turns      INT       -- counter State 2 (max 10)
 closing_turns         INT       -- counter State 3 (max 10)
 candidate_products    JSONB     -- SP candidates khi search ra nhiều kết quả (xóa sau khi chọn)
@@ -265,8 +269,25 @@ Flow đầy đủ đã test xong qua Messenger thật:
 
 ## Pending — việc cần làm tiếp
 
-1. **Commit** toàn bộ: `feat: state machine 4 states + webview form + 2-stage search`
-2. **Cron auto-crawl** — dùng `node-cron`, crawl định kỳ bài đăng mới
-3. **Niche filter** — State 0 check product_hint có khớp ngách fanpage không (tránh tư vấn SP không bán)
-4. **Niche detection** — tự động detect sau crawl, lưu vào `ai_page_settings.niche`
-5. **Merge về main**
+### Branch `chat-interface` (fix & cải thiện chat)
+1. **Niche filter** — State 0 check product_hint khớp ngách fanpage không (tránh tư vấn SP không bán)
+2. **Niche detection** — tự động detect ngách sau crawl, lưu vào `ai_page_settings.niche`
+3. **Cron auto-crawl** — dùng `node-cron`, crawl bài đăng mới định kỳ
+4. **State 2 timing bug** — worker tính missing trước khi LLM extract tin hiện tại → mất 1 turn. Cân nhắc fix.
+5. **User test** — cho người dùng thật test, collect bugs
+
+### Branch `livestream-reply` (feature mới — chưa code gì)
+Đọc `Logic-Feature.md/LIVESTREAM_REPLY.md` để hiểu đầy đủ design.
+
+Thứ tự implement:
+1. DB migration: `live_comment_replies` + 2 columns `ai_page_settings`
+2. `liveQueue.js` + `liveWorker.js` (classify comment + reply với Messenger Ref URL)
+3. Webhook route nhận live comment events từ Facebook
+4. `chatWorker.js` handle `referral.ref` → auto-tag + skip State 0
+5. API endpoints cho UI (stats, comment list)
+6. Frontend: `LivestreamPage.jsx` + `CommentFeed.jsx` + `LiveSettings.jsx`
+7. Test end-to-end: comment → AI reply → khách inbox → chốt đơn
+
+### Khi cả 2 ổn định
+- Merge `livestream-reply` → `chat-interface`
+- Merge `chat-interface` → `main`
