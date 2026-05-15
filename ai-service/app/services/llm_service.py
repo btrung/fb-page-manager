@@ -28,7 +28,7 @@ Nhiệm vụ: trích xuất thông tin sản phẩm từ nội dung bài đăng.
 
 Trả về JSON với đúng các trường sau (không thêm trường khác):
 {
-  "extracted_product_name": "tên sản phẩm chính" hoặc null nếu không rõ,
+  "extracted_product_name": "tên sản phẩm ĐẦY ĐỦ từ bài post, KHÔNG rút ngắn, KHÔNG cắt bỏ — lấy nguyên tên như trong bài kể cả dài" hoặc null nếu không rõ,
   "price": số nguyên (VNĐ, không dấu chấm/phẩy) hoặc null nếu không có giá,
   "what_is_product": "mô tả ngắn sản phẩm là gì" hoặc null,
   "product_count": số lượng loại sản phẩm khác nhau trong bài (integer),
@@ -40,6 +40,7 @@ Quy tắc:
 - is_sale_post = true: bài có rao bán, có giá, có CTA mua hàng, hoặc giới thiệu sản phẩm
 - is_sale_post = false: bài chia sẻ, tin tức, cảm xúc, không liên quan bán hàng
 - price: chỉ lấy số nguyên VNĐ. Ví dụ: "150k" → 150000, "1.200.000đ" → 1200000
+- extracted_product_name: lấy NGUYÊN tên từ dòng đầu hoặc tiêu đề bài post, không tóm tắt, không dịch, không rút ngắn. Ví dụ: "Áo Thun Lạnh Thể Thao Nam Nữ M-8XL Navy BS3281 – Màu Xám Đậm" chứ không phải "Áo thun thể thao"
 - product_count: đếm số LOẠI sản phẩm khác nhau
 - Chỉ trả về JSON thuần túy, không markdown, không giải thích"""
 
