@@ -40,6 +40,16 @@ Khi khách tap → webhook gửi về:
 ```
 Format ref: `live_{product_hint_slug}` — ví dụ `live_ao-thun-do`, `live_vay-hoa`
 
+## Kế hoạch triển khai
+
+- [ ] Phase 1 — DB migration: `live_comment_replies` + `livestream_ai_enabled` + `livestream_cta`
+- [ ] Phase 2 — `liveQueue.js` + `liveWorker.js`: classify comment → reply kèm m.me Ref URL
+- [ ] Phase 3 — Webhook route `/webhook/live` nhận comment events từ Facebook
+- [ ] Phase 4 — `chatWorker.js`: handle `referral.ref` → auto-tag + skip State 0
+- [ ] Phase 5 — API endpoints: stats + comment list cho UI
+- [ ] Phase 6 — Frontend: LivestreamPage + 4 components
+- [ ] Phase 7 — Test end-to-end: comment → AI reply → khách inbox → chốt đơn
+
 ## Schema / Config
 
 ### Bảng mới: live_comment_replies

@@ -60,6 +60,17 @@ Routing:
 - LLM lo: văn phong, tâm lý, extract từ tin nhắn
 - Worker lo: routing chính xác (deterministic), không nhờ LLM quyết định
 
+## Kế hoạch triển khai
+
+- [x] Phase 1 — DB schema + Webhook nhận tin nhắn + chatQueue
+- [x] Phase 2 — chatWorker cơ bản + Product search + FB Send API
+- [x] Phase 3 — Chat UI (ChatPage 3 cột + ConversationList + ChatView + CustomerPanel)
+- [x] Phase 4 — Settings Page (toggle AI + active hours per fanpage)
+- [x] Phase 5 — State machine 4 states + 2-stage retrieval (Qdrant → LLM rerank)
+- [x] Phase 6 — Webview form giao hàng (State 3 redesign, thay LLM collect trực tiếp)
+- [ ] Phase 7 — Niche filter + auto-detect ngách sau crawl
+- [ ] Phase 8 — Cron auto-crawl định kỳ
+
 ## Schema / Config
 
 ### chat_sessions (fields quan trọng)
