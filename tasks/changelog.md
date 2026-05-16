@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.5 — 2026-05-16 — Auto subscribe webhook + role detection
+- `backend/routes/api.js` — thêm `tasks` field khi fetch `/me/accounts`, detect role, subscribe webhook tự động chỉ cho ADMINISTRATOR
+- `backend/db/schema.sql` — thêm cột `role VARCHAR(50)` vào `page_tokens`
+
 ## v0.4 — 2026-05-15 — Chat flow end-to-end hoạt động
 Flow: tìm SP → rerank → confirm → tư vấn + variants → webview form → confirm → tạo đơn
 Logic hiện tại: `tasks/features/chat.md`

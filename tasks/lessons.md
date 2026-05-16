@@ -10,6 +10,11 @@ Re-crawl skip post đã có trong DB → Qdrant thiếu/sai sau khi xóa collect
 Cách đúng: luôn re-embed kể cả post đã có → Qdrant luôn sync với DB.
 Áp dụng: nếu Qdrant bị xóa thủ công → chạy lại crawl là đủ, không cần script riêng.
 
+## 2026-05-16 — page_tokens: Editor/Moderator không subscribe được webhook
+Gọi `/subscribed_apps` với page access token của Editor/Moderator → lỗi permission.
+Cách đúng: check field `tasks` từ `/me/accounts` — chỉ subscribe nếu `tasks` chứa `"MANAGE"` (= ADMINISTRATOR).
+Áp dụng: lưu thêm cột `role` vào `page_tokens` để sau này biết page nào có full quyền.
+
 ## 2026-05-15 — State 2: timing bug mất 1 turn
 Worker tính `missing_variants` trước khi LLM extract xong tin nhắn hiện tại → LLM thấy `is_complete=false` dù khách vừa cung cấp đủ → mất 1 turn.
 Chấp nhận tạm. Fix đúng: tính missing sau khi merge extracted_variants vào session trước.

@@ -17,7 +17,7 @@ router.get('/pages', async (req, res, next) => {
   try {
     const response = await axios.get(`${GRAPH_API}/me/accounts`, {
       params: {
-        fields: 'id,name,picture{url},fan_count,category,access_token',
+        fields: 'id,name,picture{url},fan_count,category,access_token,tasks',
         limit: 50,
         access_token: accessToken,
       },
@@ -29,17 +29,31 @@ router.get('/pages', async (req, res, next) => {
       req.session.pageTokens[page.id] = page.access_token;
     });
 
-    // Lưu page tokens vào DB để webhook auto-sync dùng
+    // Lưu page tokens vào DB + subscribe webhook tự động cho admin pages
     for (const page of response.data.data) {
-      if (page.access_token) {
-        pool.query(
-          `INSERT INTO page_tokens (page_id, user_id, page_access_token, updated_at)
-           VALUES ($1, $2, $3, NOW())
-           ON CONFLICT (page_id) DO UPDATE SET
-             page_access_token = EXCLUDED.page_access_token,
-             updated_at = NOW()`,
-          [page.id, userId, page.access_token],
-        ).catch((err) => console.error('[API] Lưu page token thất bại:', err.message));
+      if (!page.access_token) continue;
+
+      const tasks = page.tasks || [];
+      const role = tasks.includes('MANAGE') ? 'ADMINISTRATOR' : 'EDITOR';
+
+      pool.query(
+        `INSERT INTO page_tokens (page_id, user_id, page_access_token, role, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (page_id) DO UPDATE SET
+           page_access_token = EXCLUDED.page_access_token,
+           role = EXCLUDED.role,
+           updated_at = NOW()`,
+        [page.id, userId, page.access_token, role],
+      ).catch((err) => console.error('[API] Lưu page token thất bại:', err.message));
+
+      // Chỉ subscribe webhook cho admin — editor/moderator không có quyền
+      if (role === 'ADMINISTRATOR') {
+        axios.post(`${GRAPH_API}/${page.id}/subscribed_apps`, null, {
+          params: {
+            access_token: page.access_token,
+            subscribed_fields: 'messages,messaging_postbacks,feed',
+          },
+        }).catch((err) => console.error(`[API] Subscribe webhook thất bại cho ${page.id}:`, err.response?.data || err.message));
       }
     }
 
