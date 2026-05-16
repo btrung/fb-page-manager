@@ -98,5 +98,5 @@ Forward `/api`, `/form`, `/webhook` → backend port 5000
 
 ## Nâng cấp tiếp theo
 
-- LivestreamPage + 4 components (xem `tasks/features/livestream-reply.md`)
+- LivestreamPage + 4 components — UI design đầy đủ ở `tasks/features/livestream-reply.md`
 - Tối ưu responsive mobile

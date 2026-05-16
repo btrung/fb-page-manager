@@ -40,6 +40,117 @@ Khi khách tap → webhook gửi về:
 ```
 Format ref: `live_{product_hint_slug}` — ví dụ `live_ao-thun-do`, `live_vay-hoa`
 
+## UI Design
+
+### Layout — 3 cột cố định (kiểu email client)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  🧠 AI Học    💬 Hội Thoại    📺 Livestream    ⚙️ Cài đặt               │
+├─────────────────────────────────────────────────────────────────────────┤
+│  📺 Livestream                    [Page: Cửa hàng ABC ▾]                │
+├──────────────────┬──────────────────────────────┬───────────────────────┤
+│  PHIÊN LIVE      │  COMMENTS                    │  DETAIL               │
+│  (20%)           │  (45%)                       │  (35%)                │
+└──────────────────┴──────────────────────────────┴───────────────────────┘
+```
+
+### Cột trái — Phiên Live
+```
+┌──────────────────┐
+│ 🔴 Live 16/5     │  ← đang live
+│  💬47  🛍️12  📥3 │  ← total / intent / inbox
+├──────────────────┤
+│ ✅ Live 14/5     │  ← đã kết thúc
+│  💬23  🛍️8   📥1 │
+├──────────────────┤
+│ [⚙️ Cài đặt AI]  │  ← mở modal
+└──────────────────┘
+```
+- Session tự tạo khi nhận comment đầu tiên
+- `🔴` đang live, `✅` đã kết thúc
+- Badge: tổng comment / có intent / đã inbox
+
+### Cột giữa — Comment Feed
+
+**Filter tabs** (default: 🛍️ Intent):
+```
+[Tất cả 47]  [🛍️ Intent 12]  [📥 Đã inbox 3]  [⚠️ Lỗi]
+```
+- `⚠️ Lỗi` chỉ hiện khi có comment AI detect được nhưng reply thất bại
+
+**Stats bar** (gắn với session đang chọn):
+```
+💬 47 comment  │  🛍️ 12 intent (26%)  │  ✅ 11/12 đã reply  │  📥 3 inbox  │  🛒 1 đơn
+```
+
+**Comment card:**
+```
+👤 Nguyễn Văn A  •  2m
+"áo đỏ size M giá bao nhiêu vậy shop ơi"
+┌─ AI reply ──────────────────────────┐
+│ Chị nhắn vào page để em tư vấn nhé! │
+│ 👉 m.me/page?ref=live_ao-do         │
+└─────────────────────────────────────┘
+✅ Đã reply  •  📥 Đã inbox
+```
+
+**Hành vi filter:**
+| Filter | Comment hiển thị | AI reply |
+|---|---|---|
+| Tất cả | Mọi comment | Thu gọn 1 dòng |
+| 🛍️ Intent | Chỉ buying intent | Mở full |
+| 📥 Đã inbox | Chỉ đã vào DM | Mở full + link hội thoại |
+| ⚠️ Lỗi | AI reply thất bại | Mở full + nút retry |
+
+### Cột phải — Detail (khi click comment)
+```
+👤 Nguyễn Văn A  •  2 phút trước
+
+"áo đỏ size M giá bao nhiêu vậy shop ơi"
+
+── AI Reply ─────────────────────────────
+"Chị nhắn vào page để em tư vấn ngay nhé!
+ 👉 m.me/page?ref=live_ao-do"
+
+── Hành trình ───────────────────────────
+📥 Đã vào inbox
+💬 Đang chat  (3 tin)
+🛒 Chưa đặt đơn
+
+[💬 Xem hội thoại →]    ← link sang ChatPage
+```
+
+### Modal Cài đặt AI
+```
+┌──────────────────────────────────────┐
+│  ⚙️ Cài đặt Livestream AI     [✕]   │
+├──────────────────────────────────────┤
+│  AI Monitor comments                 │
+│  ○──────────────● Bật                │
+│                                      │
+│  Câu reply mẫu:                      │
+│  ┌──────────────────────────────┐    │
+│  │ {tên} nhắn vào page để em   │    │
+│  │ tư vấn ngay nhé! 👉 {link}  │    │
+│  └──────────────────────────────┘    │
+│  * {tên} = tên khách  {link} = m.me  │
+│                                      │
+│                    [Lưu]             │
+└──────────────────────────────────────┘
+```
+
+### Frontend files cần tạo
+- `frontend/src/pages/LivestreamPage.jsx` — layout 3 cột + page selector
+- `frontend/src/components/livestream/LiveSessionList.jsx` — cột trái
+- `frontend/src/components/livestream/CommentFeed.jsx` — cột giữa + filter + stats bar
+- `frontend/src/components/livestream/CommentDetail.jsx` — cột phải + hành trình
+- `frontend/src/components/livestream/LiveSettingsModal.jsx` — modal cài đặt AI
+- `Navbar.jsx` — thêm tab 📺 Livestream
+- `App.jsx` — thêm route `/livestream`
+
+---
+
 ## Kế hoạch triển khai
 
 - [ ] Phase 1 — DB migration: `live_comment_replies` + `livestream_ai_enabled` + `livestream_cta`
