@@ -147,37 +147,101 @@ Cân nhắc thêm endpoint nhẹ để extract product hint từ comment nếu c
 **Header mới trong Navbar:** `[🧠 AI Học] [💬 Hội Thoại] [📺 Livestream] [⚙️ Cài đặt]`
 Route: `/livestream`
 
-### Layout
+### Layout — 3 cột cố định (kiểu email client)
+
 ```
-┌─────────────────────────────────────────────────────────┐
-│ 📺 Livestream  [Page selector ▾]          🔴 ĐANG LIVE  │
-├────────────────┬────────────────────────────────────────┤
-│ CÀI ĐẶT (1/3) │ COMMENT FEED (2/3)                     │
-│                │ [Tất cả] [🛍️ Mua hàng] [✅ Đã reply]  │
-│ AI Monitor     │ ─────────────────────────────────────  │
-│ [🟢 Bật]       │ 👤 Nguyễn A • 2m                      │
-│                │ "áo đỏ size M giá bao nhiêu vậy shop"  │
-│ CTA reply:     │ 🛍️ Buying intent • ✅ Đã reply         │
-│ ┌────────────┐ │ ↳ AI: "Chị nhắn vào page để..."        │
-│ │ Anh/chị   │ │                                         │
-│ │ nhắn vào  │ │ 👤 Trần B • 5m                         │
-│ │ page để   │ │ "shop còn hàng không"                   │
-│ │ e tư vấn  │ │ 🛍️ Buying intent • ⏳ Đang xử lý       │
-│ │ nhé! 👉   │ │                                         │
-│ └────────────┘ │ 👤 Lê C • 8m                           │
-│                │ "đẹp quá shop ơi"                      │
-│ Stats hôm nay: │ ─ (không có intent mua)                │
-│ 💬 47 comments │                                         │
-│ 🛍️ 12 buying   │                                         │
-│ ✅ 11 replied  │                                         │
-│ 📥 3 đã inbox  │                                         │
-└────────────────┴────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  🧠 AI Học    💬 Hội Thoại    📺 Livestream    ⚙️ Cài đặt                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  📺 Livestream          [Page: Cửa hàng ABC ▾]                              │
+├──────────────────┬──────────────────────────────┬───────────────────────────┤
+│  PHIÊN LIVE      │  COMMENTS                    │  DETAIL                   │
+│  (20%)           │  (45%)                       │  (35%)                    │
+│                  │                              │                           │
+│ 🔴 Live 16/5    │  [Tất cả 47][🛍️ Intent 12]  │  👤 Nguyễn Văn A          │
+│  💬47 🛍️12 📥3  │              [📥 Inbox 3]    │  2 phút trước             │
+│                  │  ──────────────────────────  │                           │
+│ ✅ Live 14/5    │  👤 Nguyễn Văn A  •  2m      │  "áo đỏ size M giá bao    │
+│  💬23 🛍️8  📥1  │  "áo đỏ size M giá bao..."  │   nhiêu vậy shop ơi"      │
+│                  │  ┌─ AI reply ──────────────┐ │                           │
+│ ✅ Live 12/5    │  │ Chị nhắn vào page để em │ │  ── AI Reply ──────────── │
+│  💬31 🛍️5  📥2  │  │ tư vấn ngay nhé! 👉    │ │  "Chị nhắn vào page để   │
+│                  │  │ m.me/page?ref=live_ao.. │ │   em tư vấn ngay nhé!    │
+│                  │  └─────────────────────────┘ │   👉 m.me/page?ref=       │
+│                  │  ✅ Đã reply  •  📥 Đã inbox │       live_ao-thun-do"    │
+│                  │  ──────────────────────────  │                           │
+│                  │  👤 Trần Thị B  •  5m        │  ── Hành trình ─────────  │
+│                  │  "shop còn hàng k, muốn..."  │  📥 Đã vào inbox          │
+│                  │  ┌─ AI reply ──────────────┐ │  💬 Đang chat  (3 tin)    │
+│                  │  │ Chị nhắn vào page để em │ │  🛒 Chưa đặt đơn          │
+│                  │  │ tư vấn ngay nhé! 👉    │ │                           │
+│                  │  │ m.me/page?ref=live_vay. │ │  [💬 Xem hội thoại →]    │
+│                  │  └─────────────────────────┘ │                           │
+│                  │  ✅ Đã reply  •  🚫 Chưa inbox│                          │
+│                  │  ──────────────────────────  │                           │
+│                  │  👤 Lê Văn C  •  8m          │                           │
+│                  │  "bao nhiêu tiền 1 cái vậy" │                           │
+│                  │  ┌─ AI reply ──────────────┐ │                           │
+│                  │  │ Anh nhắn vào page để em │ │                           │
+│                  │  │ báo giá nhé! 👉 m.me/.. │ │                           │
+│                  │  └─────────────────────────┘ │                           │
+│                  │  ✅ Đã reply  •  🚫 Chưa inbox│                          │
+│  ─────────────── │                              │                           │
+│  [⚙️ Cài đặt AI] │                              │                           │
+└──────────────────┴──────────────────────────────┴───────────────────────────┘
+```
+
+### Cột trái — Phiên Live
+- Webhook tự tạo session khi nhận comment đầu tiên → tự xuất hiện, không cần nhập tay
+- Badge mỗi session: tổng comment `💬` / có intent `🛍️` / đã vào inbox `📥`
+- `🔴` = đang live, `✅` = live đã kết thúc
+- Nút `⚙️ Cài đặt AI` ở dưới cột → mở modal
+
+### Cột giữa — Comment Feed
+- 3 tab filter: `Tất cả` / `🛍️ Intent mua` / `📥 Inbox`
+- **Filter `🛍️ Intent mua` là chính** — xem nhanh toàn bộ comment có intent + AI đã rep gì
+- AI reply **luôn mở full** khi ở filter Intent / Inbox, thu gọn 1 dòng ở filter Tất cả
+- Status mỗi card: `✅ Đã reply` + `📥 Đã inbox` / `🚫 Chưa inbox` / `⏳ Đang xử lý`
+
+### Hành vi filter chi tiết
+
+| Filter | Comment hiển thị | AI reply |
+|---|---|---|
+| `Tất cả` | Mọi comment | Thu gọn 1 dòng preview |
+| `🛍️ Intent mua` | Chỉ có buying intent | **Mở full** để review nhanh |
+| `📥 Inbox` | Chỉ đã convert sang DM | Mở full + link hội thoại |
+
+### Cột phải — Detail (khi click 1 comment)
+- Comment gốc đầy đủ
+- AI reply full text
+- **Hành trình**: `📥 Đã inbox` → `💬 Đang chat (N tin)` → `🛒 Đặt đơn / Chưa`
+- Button `[💬 Xem hội thoại →]` → chuyển sang ChatPage, filter sẵn session đó
+
+### Modal Cài đặt AI
+```
+┌─────────────────────────────────────┐
+│  ⚙️ Cài đặt Livestream AI    [✕]   │
+│                                     │
+│  AI Monitor comments                │
+│  ○────────────────● Bật             │
+│                                     │
+│  Câu reply mẫu:                     │
+│  ┌─────────────────────────────┐    │
+│  │ {tên} nhắn vào page để em  │    │
+│  │ tư vấn ngay nhé! 👉 {link} │    │
+│  └─────────────────────────────┘    │
+│  * {tên} = tên khách, {link} = m.me │
+│                                     │
+│              [Lưu]                  │
+└─────────────────────────────────────┘
 ```
 
 ### Frontend files cần tạo
-- `frontend/src/pages/LivestreamPage.jsx` — layout chính
-- `frontend/src/components/livestream/CommentFeed.jsx` — danh sách comment realtime
-- `frontend/src/components/livestream/LiveSettings.jsx` — toggle + CTA textarea
+- `frontend/src/pages/LivestreamPage.jsx` — layout 3 cột chính
+- `frontend/src/components/livestream/LiveSessionList.jsx` — cột trái, danh sách phiên live
+- `frontend/src/components/livestream/CommentFeed.jsx` — cột giữa, comment + filter tabs
+- `frontend/src/components/livestream/CommentDetail.jsx` — cột phải, detail + hành trình
+- `frontend/src/components/livestream/LiveSettingsModal.jsx` — modal cài đặt AI
 
 ---
 
