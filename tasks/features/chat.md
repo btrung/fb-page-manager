@@ -1,12 +1,56 @@
 # AI Chat
 
 ## Làm gì
-AI tự động tư vấn + chốt đơn qua Facebook Messenger. Chỉ xử lý hot customer (đã nhắn vào fanpage). State machine 4 states: tìm SP → confirm SP → tư vấn + variants → lấy thông tin giao hàng.
+AI tự động tư vấn + chốt đơn qua Facebook Messenger. Chỉ xử lý hot customer (đã nhắn vào fanpage). 3 conversation types xử lý toàn bộ tình huống khách: support → general → buying, chuyển sang buying mượt khi có tín hiệu.
 
 ## Flow hiện tại
 
-### Classify (chạy đầu tiên mọi state)
-1 LLM call `/chat/classify-intent` → `{has_product_signal, product_hint, message_intent, product_feedback}`
+### Session reset
+- Idle >24h → `ai_mode = 'AI'` + tất cả counters về 0 + `last_product_hint = null`
+- Idle >3 ngày → thêm reset toàn bộ state machine (identified_product, variants...)
+
+### Classify (chạy đầu tiên mọi tin nhắn)
+1 LLM call `/chat/classify-intent`:
+```
+Output: {
+  has_product_signal, product_hint, message_intent, product_feedback,
+  conversation_type: "buying|support|general",
+  buy_candidate: string|null,     -- SP khách có thể muốn mua (khác SP đang phàn nàn)
+  frustration_level: "high|medium|low"
+}
+```
+Worker lưu `last_product_hint` vào session mỗi lượt classify.
+
+---
+
+### conversation_type = support (max 5 lượt)
+Khách phàn nàn về SP đã mua / chất lượng / dịch vụ.
+
+LLM call `/chat/handle-support`:
+- Input: message, product_hint, reply_style
+- Output: `{reply, frustration_level, cta_included}`
+
+Routing:
+- `frustration=high` → reply thuần support, không CTA
+- `frustration=medium/low` → reply support + gentle CTA chuyển hướng mua
+- `support_turns >= 5` → HUMAN mode
+
+### conversation_type = general (max 5 lượt)
+Khách hỏi chính sách: bảo hành, vận chuyển, đổi trả... không liên quan SP cụ thể.
+
+LLM call `/chat/handle-general`:
+- Input: message, page_policy, niche
+- Output: `{reply}`
+- `general_turns >= 5` → HUMAN mode
+
+### conversation_type = buying → Fast-track + State machine
+
+**Fast-track khi chuyển từ support/general sang buying:**
+- Có `last_product_hint` + `buy_candidate` → Qdrant search
+- confidence=high → **State 1 trực tiếp** (bỏ qua State 0)
+- confidence=medium/low → State 0 bình thường
+
+---
 
 ### State 0 — Tìm SP (max 5 lượt)
 1. Check niche: `product_hint` không khớp `ai_page_settings.niche` → từ chối lịch sự → `no_product_turns++`
@@ -56,7 +100,6 @@ Routing:
 - Delay 7s trước khi xử lý → gom nhiều tin nhắn liên tiếp
 - `getUnrepliedCustomerMessages` → lấy TẤT CẢ tin khách chưa được AI reply
 - In-memory `_processing` Set → tránh 2 job cùng session chạy song song
-- Session idle >3 ngày → auto reset về State 0 khi khách nhắn lại
 - LLM lo: văn phong, tâm lý, extract từ tin nhắn
 - Worker lo: routing chính xác (deterministic), không nhờ LLM quyết định
 
@@ -68,8 +111,9 @@ Routing:
 - [x] Phase 4 — Settings Page (toggle AI + active hours per fanpage)
 - [x] Phase 5 — State machine 4 states + 2-stage retrieval (Qdrant → LLM rerank)
 - [x] Phase 6 — Webview form giao hàng (State 3 redesign, thay LLM collect trực tiếp)
-- [ ] Phase 7 — Niche filter + auto-detect ngách sau crawl
-- [ ] Phase 8 — Cron auto-crawl định kỳ
+- [ ] Phase 7 — 3 conversation types (support/general/buying) + fast-track + session reset 24h
+- [ ] Phase 8 — Niche filter + auto-detect ngách sau crawl
+- [ ] Phase 9 — Cron auto-crawl định kỳ
 
 ## Schema / Config
 
@@ -85,6 +129,10 @@ consulting_turns      INT       -- counter State 2 (max 10)
 closing_turns         INT       -- counter State 3 (max 10)
 candidate_products    JSONB     -- SP candidates khi rerank=medium (xóa sau khi chọn)
 ai_mode               VARCHAR   -- 'AI' | 'HUMAN'
+-- Phase 7 (chưa migrate)
+support_turns         INT       -- counter support mode (max 5)
+general_turns         INT       -- counter general mode (max 5)
+last_product_hint     VARCHAR   -- SP hint gần nhất từ classify, dùng fast-track
 ```
 
 ### ai_page_settings (fields quan trọng)
@@ -93,12 +141,15 @@ ai_enabled    BOOLEAN
 active_hours  JSONB     -- null = 24/7, {mon:{enabled,start,end}, ...}
 reply_style   TEXT      -- giọng điệu AI, user tự viết
 niche         VARCHAR   -- ngách fanpage (tự detect sau crawl)
+page_policy   TEXT      -- chính sách bảo hành, vận chuyển... (Phase 7, chưa migrate)
 ```
 
 ### LLM Endpoints
 | Endpoint | Dùng khi |
 |---|---|
-| `/chat/classify-intent` | Mọi tin nhắn — phân loại intent |
+| `/chat/classify-intent` | Mọi tin nhắn — phân loại intent + conversation_type |
+| `/chat/handle-support` | conversation_type=support — bảo vệ SP + detect frustration |
+| `/chat/handle-general` | conversation_type=general — trả lời từ page_policy |
 | `/chat/rerank-products` | State 0 — chọn SP phù hợp nhất từ top 5 |
 | `/chat/generate-product-confirm` | State 0/1 — hỏi xác nhận SP |
 | `/chat/generate-probe` | State 0 — redirect khách đùa |
@@ -116,10 +167,10 @@ niche         VARCHAR   -- ngách fanpage (tự detect sau crawl)
 - **AI mode activation**: user bật lại AI → worker push job ngay cho tin chưa trả lời, không cần đợi
 - **Qdrant bị xóa thủ công**: chạy lại crawl là đủ
 - **State 2 timing bug**: worker tính missing trước khi LLM extract tin hiện tại → mất 1 turn — xem `lessons.md`
+- **buy_candidate vs product_hint**: support mode dùng `buy_candidate` để fast-track, không dùng `product_hint` (tránh nhầm SP đang phàn nàn với SP muốn mua)
 
 ## Nâng cấp tiếp theo
 
+- **3 conversation types** (Phase 7 — thiết kế xong, chưa code) — support/general/buying + fast-track + session reset 24h. Chi tiết đã có trong Flow hiện tại + Schema
 - Niche filter — State 0 reject product_hint không khớp ngách (đã có schema `niche`, chưa code logic check)
-- Niche detection — auto detect sau crawl, lưu vào `ai_page_settings.niche`
-- Cron auto-crawl — `node-cron`, crawl bài đăng mới định kỳ
 - State 2 timing bug fix — tính missing sau khi merge extracted_variants trước khi pass vào LLM
