@@ -285,62 +285,75 @@ const processChatJob = async (job) => {
   }
 
   // ── Phân tích tin nhắn (dùng combinedContent) ─────────────────────────────
+  const currentState = !identifiedProduct ? 'state0'
+    : !productConfirmed   ? 'state1'
+    : !variantConfirmed   ? 'state2'
+    : 'state3';
+
+  const recentMsgs = await chatDB.getSessionMessages(sessionId, 5);
+
   const classify = await callAI('/classify-intent', {
-    message:   combinedContent,
-    has_image: hasImage,
+    message:         combinedContent,
+    has_image:       hasImage,
+    current_state:   currentState,
+    recent_messages: recentMsgs.map(m => ({ role: m.senderType, content: m.content || '' })),
   });
   console.log('[CHAT WORKER] classify:', JSON.stringify(classify), '| msg:', lastCustomer.content?.slice(0, 60));
   const { has_product_signal, product_hint, message_intent, product_feedback,
-          conversation_type, buy_candidate, frustration_level } = classify;
+          frustration_level, buy_candidate } = classify;
+
+  // buy_candidate = khách muốn mua SP cụ thể → luôn là buying, không phải support
+  const conversation_type = buy_candidate ? 'buying' : classify.conversation_type;
+  // switchHint: hint tốt nhất để tìm SP mới khi khách muốn đổi
+  const switchHint = buy_candidate || product_hint;
 
   // Lưu last_product_hint mỗi lượt nếu có
-  if (product_hint) {
-    await chatDB.updateSessionIntelligence(sessionId, { lastProductHint: product_hint });
+  if (switchHint) {
+    await chatDB.updateSessionIntelligence(sessionId, { lastProductHint: switchHint });
   }
 
-  // ── conversation_type routing — chỉ khi chưa vào state machine ───────────
+  // ── conversation_type routing — áp dụng mọi state ────────────────────────
+  if (conversation_type === 'support' && supportTurns < 5) {
+    const result = await callAI('/handle-support', {
+      message:           combinedContent,
+      product_hint:      product_hint || lastProductHint || identifiedProduct?.name || null,
+      frustration_level: frustration_level || 'low',
+      reply_style:       aiSettings?.replyStyle || null,
+    });
+    await _sendAndSave({ session, reply: result.reply });
+    await chatDB.incrementCounter(sessionId, 'support_turns');
+    console.log('[CHAT WORKER] support:', { frustration_level: result.frustration_level, cta_included: result.cta_included });
+    return { handled: 'support', turns: supportTurns + 1, frustration: result.frustration_level };
+  }
+
+  if (conversation_type === 'support' && supportTurns >= 5) {
+    await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
+    return { skipped: 'dung_support', turns: supportTurns };
+  }
+
+  if (conversation_type === 'general' && generalTurns < 5) {
+    const result = await callAI('/handle-general', {
+      message:     combinedContent,
+      page_policy: aiSettings?.pagePolicy || null,
+      niche:       aiSettings?.niche || null,
+      reply_style: aiSettings?.replyStyle || null,
+    });
+    await _sendAndSave({ session, reply: result.reply });
+    await chatDB.incrementCounter(sessionId, 'general_turns');
+    return { handled: 'general', turns: generalTurns + 1 };
+  }
+
+  if (conversation_type === 'general' && generalTurns >= 5) {
+    await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
+    return { skipped: 'dung_general', turns: generalTurns };
+  }
+
+  // Fast-track — chỉ khi chưa có identified_product
   if (!identifiedProduct) {
-    if (conversation_type === 'support' && supportTurns < 5) {
-      const result = await callAI('/handle-support', {
-        message:           combinedContent,
-        product_hint:      product_hint || lastProductHint || null,
-        frustration_level: frustration_level || 'low',
-        reply_style:       aiSettings?.replyStyle || null,
-      });
-      await _sendAndSave({ session, reply: result.reply });
-      await chatDB.incrementCounter(sessionId, 'support_turns');
-      console.log('[CHAT WORKER] support:', { frustration_level: result.frustration_level, cta_included: result.cta_included });
-      return { handled: 'support', turns: supportTurns + 1, frustration: result.frustration_level };
-    }
-
-    if (conversation_type === 'support' && supportTurns >= 5) {
-      await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
-      return { skipped: 'dung_support', turns: supportTurns };
-    }
-
-    if (conversation_type === 'general' && generalTurns < 5) {
-      const result = await callAI('/handle-general', {
-        message:     combinedContent,
-        page_policy: aiSettings?.pagePolicy || null,
-        niche:       aiSettings?.niche || null,
-        reply_style: aiSettings?.replyStyle || null,
-      });
-      await _sendAndSave({ session, reply: result.reply });
-      await chatDB.incrementCounter(sessionId, 'general_turns');
-      return { handled: 'general', turns: generalTurns + 1 };
-    }
-
-    if (conversation_type === 'general' && generalTurns >= 5) {
-      await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
-      return { skipped: 'dung_general', turns: generalTurns };
-    }
-
-    // Fast-track: có hint từ support/general → thử tìm SP ngay, skip State 0 nếu high confidence
     const fastTrackHint = buy_candidate || (conversation_type === 'buying' ? product_hint : null) || lastProductHint;
     if (fastTrackHint && conversation_type === 'buying') {
       const found = await _searchProducts({ session, query: fastTrackHint, imageUrl, topK: 3 });
       if (found.length === 1 && found[0].score >= 0.5) {
-        // High confidence → State 1 trực tiếp
         await chatDB.updateSessionIntelligence(sessionId, {
           identifiedProduct: found[0].product,
           noProductTurns:    0,
@@ -352,7 +365,6 @@ const processChatJob = async (job) => {
         await _sendAndSave({ session, reply });
         return { handled: 'state0_fasttrack_s1', product: found[0].product.name };
       }
-      // Medium/low confidence → tiếp tục State 0 bình thường với hint đã có
     }
   }
 
@@ -473,8 +485,8 @@ const processChatJob = async (job) => {
 
     // Khách từ chối SP hiện tại
     if (product_feedback === 'denied') {
-      if (has_product_signal && product_hint) {
-        const _results = await _searchProducts({ session, query: product_hint, imageUrl });
+      if (switchHint) {
+        const _results = await _searchProducts({ session, query: switchHint, imageUrl });
         const found = _results[0] || null;
         if (found) {
           // SP mới → reset unconfirmed_turns
@@ -518,9 +530,9 @@ const processChatJob = async (job) => {
       return { handled: 'state1_confirmed_enter_s2' };
     }
 
-    // Khách hỏi SP khác (product_hint khác với SP hiện tại)
-    if (has_product_signal && product_hint && product_hint !== identifiedProduct.query) {
-      const _results = await _searchProducts({ session, query: product_hint, imageUrl });
+    // Khách muốn SP khác (switchHint khác với SP hiện tại)
+    if (switchHint && switchHint !== identifiedProduct.query && switchHint !== identifiedProduct.name) {
+      const _results = await _searchProducts({ session, query: switchHint, imageUrl });
       const found = _results[0] || null;
       if (found) {
         await chatDB.updateSessionIntelligence(sessionId, {
@@ -664,9 +676,9 @@ const processChatJob = async (job) => {
     const existingSummary = await chatDB.getLastConfirmationSummary(sessionId);
 
     if (!existingSummary) {
-      // Escape: khách muốn SP khác → reset về State 0
-      if (has_product_signal && product_hint && product_hint.toLowerCase() !== identifiedProduct.name?.toLowerCase()) {
-        const _results = await _searchProducts({ session, query: product_hint, imageUrl });
+      // Escape: khách muốn SP khác → tìm SP, về State 1
+      if (switchHint && switchHint.toLowerCase() !== identifiedProduct.name?.toLowerCase()) {
+        const _results = await _searchProducts({ session, query: switchHint, imageUrl });
         const found = _results[0] || null;
         if (found) {
           await chatDB.updateSessionIntelligence(sessionId, {
@@ -710,9 +722,9 @@ const processChatJob = async (job) => {
       return { handled: 'state3_order_confirmed', orderId: order.id };
     }
 
-    // Escape: khách muốn SP khác dù đã điền form → reset về State 0
-    if (has_product_signal && product_hint && product_hint.toLowerCase() !== identifiedProduct.name?.toLowerCase()) {
-      const _results = await _searchProducts({ session, query: product_hint, imageUrl });
+    // Escape: khách muốn SP khác dù đã điền form → tìm SP, về State 1
+    if (switchHint && switchHint.toLowerCase() !== identifiedProduct.name?.toLowerCase()) {
+      const _results = await _searchProducts({ session, query: switchHint, imageUrl });
       const found = _results[0] || null;
       if (found) {
         await chatDB.updateSessionIntelligence(sessionId, {

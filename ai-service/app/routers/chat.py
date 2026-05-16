@@ -52,6 +52,8 @@ class Message(BaseModel):
 class ClassifyIntentRequest(BaseModel):
     message: str
     has_image: bool = False
+    current_state: Optional[str] = None   # state0|state1|state2|state3
+    recent_messages: Optional[List[Message]] = None  # 5 tin gần nhất
 
 
 class GenerateReplyRequest(BaseModel):
@@ -107,7 +109,8 @@ class SearchByImageRequest(BaseModel):
 async def api_classify_intent(body: ClassifyIntentRequest):
     if not body.message and not body.has_image:
         raise HTTPException(status_code=400, detail="message required")
-    result = await classify_intent(body.message, body.has_image)
+    recent = [{"role": m.role, "content": m.content} for m in body.recent_messages] if body.recent_messages else None
+    result = await classify_intent(body.message, body.has_image, body.current_state, recent)
     return result
 
 

@@ -11,15 +11,20 @@ AI tự động tư vấn + chốt đơn qua Facebook Messenger. Chỉ xử lý 
 
 ### Classify (chạy đầu tiên mọi tin nhắn)
 1 LLM call `/chat/classify-intent`:
+- Input: message + has_image + **current_state** (state0/1/2/3) + **recent_messages** (5 tin gần nhất)
+- Output:
 ```
-Output: {
+{
   has_product_signal, product_hint, message_intent, product_feedback,
   conversation_type: "buying|support|general",
-  buy_candidate: string|null,     -- SP khách có thể muốn mua (khác SP đang phàn nàn)
+  buy_candidate: string|null,     -- SP khách muốn mua (khác SP đang phàn nàn)
   frustration_level: "high|medium|low"
 }
 ```
-Worker lưu `last_product_hint` vào session mỗi lượt classify.
+Worker:
+- `switchHint = buy_candidate || product_hint` — hint tốt nhất khi đổi SP
+- `buy_candidate != null` → override `conversation_type = 'buying'` (bypass support routing)
+- Lưu `switchHint` vào `last_product_hint` session
 
 ---
 

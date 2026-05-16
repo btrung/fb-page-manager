@@ -75,7 +75,7 @@ async def _call_groq(system_prompt: str, user_content: str, max_tokens: int = 30
 # Intent Classifier
 # =============================================
 
-_INTENT_SYSTEM = """Bạn phân tích TIN NHẮN MỚI NHẤT của khách hàng và trả về JSON.
+_INTENT_SYSTEM = """Bạn phân tích TIN NHẮN MỚI NHẤT của khách hàng trong ngữ cảnh cuộc hội thoại và trả về JSON.
 
 {
   "has_product_signal": bool,
@@ -89,49 +89,72 @@ _INTENT_SYSTEM = """Bạn phân tích TIN NHẮN MỚI NHẤT của khách hàng
 
 has_product_signal: true nếu tin nhắn nhắc đến BẤT KỲ tên SP, loại hàng, hoặc khách gửi ảnh.
 
-product_hint: cụm từ NGẮN NHẤT để search SP ("áo thun lạnh", "túi da đen size M"). null nếu không có.
+product_hint: cụm từ NGẮN NHẤT để search SP. null nếu không có.
 
 message_intent:
 - "buying":     có ý định mua, hỏi giá, đặt hàng, hỏi còn hàng không
 - "asking":     hỏi thông tin SP, chất lượng, mẫu mã, so sánh
-- "confirming": xác nhận đúng SP hoặc đồng ý mua
+- "confirming": xác nhận đồng ý, ok, đúng rồi — XÉT THEO CONTEXT (state1/2/3 → thường là confirm mua)
 - "joking":     chào hỏi thuần túy, spam, không liên quan hàng hoá
 - "other":      không rõ ý định
 
 product_feedback: phản hồi về SP AI vừa giới thiệu:
-- "confirmed": xác nhận đúng SP
-- "denied":    từ chối SP
+- "confirmed": xác nhận đúng SP (ok/đúng/phải/cho đặt...)
+- "denied":    từ chối SP (không/sai/khác...)
 - "none":      không phải phản hồi về SP
 
-conversation_type — mục đích chính của tin nhắn:
-- "buying":  có tín hiệu mua hàng (hỏi giá, đặt hàng, hỏi SP)
-- "support": phàn nàn về SP đã mua, chất lượng kém, yêu cầu đổi/trả
-- "general": hỏi chính sách (bảo hành, vận chuyển, đổi trả), không liên quan SP cụ thể; hoặc chào hỏi/đùa giỡn
+conversation_type — dựa vào TOÀN BỘ context, không chỉ tin cuối:
+- "buying":  đang trong flow mua hàng (hỏi SP, confirm, chọn size/màu, xác nhận đơn)
+- "support": phàn nàn về SP ĐÃ MUA TRƯỚC ĐÂY, yêu cầu đổi/trả/bảo hành
+- "general": hỏi chính sách (vận chuyển, bảo hành), chào hỏi, không liên quan SP
 
-buy_candidate: nếu conversation_type="support", đây là SP khách có thể MUỐN MUA (khác SP đang phàn nàn).
-  Ví dụ: "áo này bị hư, cho đổi cái khác" → buy_candidate="cái khác".
-  null nếu không rõ hoặc conversation_type khác support.
+QUAN TRỌNG về conversation_type:
+- state1/2/3 + "đúng rồi"/"ok"/"được" → "buying" (đang confirm trong flow mua)
+- state1/2/3 + phàn nàn về SP đang xem → "support"
+- Chỉ "general" khi rõ ràng hỏi chính sách hoặc chào hỏi ngoài flow mua
 
-frustration_level — mức độ bực bội (chỉ xét khi conversation_type="support"):
-- "high":   tức giận, dùng từ mạnh, đe dọa, CAPSLOCK
-- "medium": không hài lòng nhưng bình tĩnh
-- "low":    phàn nàn nhẹ, vẫn lịch sự
-Nếu không phải support → trả "low".
+buy_candidate: nếu support, SP khách có thể muốn mua (khác SP đang phàn nàn). null nếu không rõ.
+
+frustration_level (chỉ khi support):
+- "high": tức giận, từ mạnh, CAPSLOCK
+- "medium": không hài lòng, bình tĩnh
+- "low": phàn nàn nhẹ
+Nếu không phải support → "low".
 
 Chỉ trả về JSON thuần, không giải thích."""
 
 
-async def classify_intent(message: str, has_image: bool = False) -> dict:
+async def classify_intent(message: str, has_image: bool = False,
+                          current_state: str | None = None,
+                          recent_messages: list | None = None) -> dict:
     """
     Phân tích TIN NHẮN MỚI NHẤT của khách — không dùng history.
     Trả về: {has_product_signal, product_hint, message_intent, product_feedback,
              conversation_type, buy_candidate, frustration_level}
     """
-    content = f"Tin nhắn: {message}"
-    if has_image:
-        content += "\n[Khách gửi kèm ảnh sản phẩm]"
+    parts = []
+    if current_state:
+        state_labels = {
+            "state0": "Chưa xác định SP",
+            "state1": "Đã tìm được SP, chờ khách confirm",
+            "state2": "SP đã confirm, đang hỏi size/màu/variants",
+            "state3": "Variants xong, đang lấy thông tin giao hàng",
+        }
+        parts.append(f"Trạng thái hiện tại: {state_labels.get(current_state, current_state)}")
 
-    result = await _call_groq(_INTENT_SYSTEM, content, max_tokens=180)
+    if recent_messages:
+        history = "\n".join(
+            f"[{'Khách' if m['role'] == 'customer' else 'AI'}]: {m['content'][:100]}"
+            for m in recent_messages[-5:]
+        )
+        parts.append(f"Lịch sử gần đây:\n{history}")
+
+    parts.append(f"Tin nhắn mới nhất của khách: {message}")
+    if has_image:
+        parts.append("[Khách gửi kèm ảnh sản phẩm]")
+
+    content = "\n\n".join(parts)
+    result = await _call_groq(_INTENT_SYSTEM, content, max_tokens=200)
 
     empty = {
         "has_product_signal": False,

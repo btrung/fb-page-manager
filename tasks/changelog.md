@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.7 — 2026-05-16 — Fix classify context + routing nhất quán mọi state
+
+- `ai-service` — classify_intent nhận thêm `current_state` + `recent_messages` (5 tin) → LLM hiểu context, không misclassify "đúng rồi" thành general
+- `chatWorker.js` — support/general routing áp dụng mọi state (không chỉ State 0)
+- `chatWorker.js` — `buy_candidate` override `conversation_type='buying'` → bypass support routing khi khách muốn đổi SP
+- `chatWorker.js` — `switchHint = buy_candidate || product_hint` dùng nhất quán ở State 1, 2, 3 escape hatches → về State 1 trực tiếp khi tìm được SP, chỉ State 0 khi không rõ
+
 ## v0.6 — 2026-05-16 — Phase 7: 3 conversation types + fast-track + session reset 24h
 - `ai-service/app/services/chat_llm_service.py` — classify_intent thêm conversation_type/buy_candidate/frustration_level; handle_support; handle_general
 - `ai-service/app/routers/chat.py` — thêm /handle-support, /handle-general

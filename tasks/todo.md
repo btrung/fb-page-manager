@@ -8,10 +8,11 @@
 - [ ] State 2 timing bug — worker tính missing trước khi LLM extract tin hiện tại → mất 1 turn
 - [ ] User test — cho người dùng thật test, collect bugs
 
-### 3 conversation types (Phase 7 — đã code)
+### 3 conversation types (Phase 7 — đã code + fix)
 - [x] Schema + migration
-- [x] `classify_intent`: thêm conversation_type, buy_candidate, frustration_level
-- [x] `chatWorker.js`: routing support/general/buying + last_product_hint + fast-track + reset 24h
+- [x] `classify_intent`: thêm conversation_type, buy_candidate, frustration_level + current_state + recent_messages
+- [x] `chatWorker.js`: routing support/general/buying mọi state + last_product_hint + fast-track + reset 24h
+- [x] `chatWorker.js`: switchHint + buy_candidate override → escape hatch nhất quán State 1/2/3
 - [x] AI endpoint `/chat/handle-support` + `/chat/handle-general`
 - [x] Settings UI: thêm textarea `page_policy` vào SettingsPage
 
