@@ -8,14 +8,11 @@
 - [ ] State 2 timing bug — worker tính missing trước khi LLM extract tin hiện tại → mất 1 turn
 - [ ] User test — cho người dùng thật test, collect bugs
 
-### 3 conversation types (thiết kế xong, sẵn sàng code)
-- [ ] Schema: thêm `page_policy` vào `ai_page_settings`, thêm `support_turns`, `general_turns`, `last_product_hint` vào `chat_sessions`
-- [ ] `classify_intent`: thêm output `conversation_type`, `buy_candidate`, `frustration_level`
-- [ ] `chatWorker.js`: routing theo conversation_type + cập nhật `last_product_hint` mỗi lượt
-- [ ] AI endpoint `/chat/handle-support`: bảo vệ SP + detect frustration + CTA khi thích hợp
-- [ ] AI endpoint `/chat/handle-general`: trả lời từ `page_policy`
-- [ ] Fast-track buying: dùng `last_product_hint` → Qdrant → State 1 trực tiếp nếu high confidence
-- [ ] Session reset 24h: `ai_mode = 'AI'` + tất cả counters + `last_product_hint = null`
+### 3 conversation types (Phase 7 — đã code)
+- [x] Schema + migration
+- [x] `classify_intent`: thêm conversation_type, buy_candidate, frustration_level
+- [x] `chatWorker.js`: routing support/general/buying + last_product_hint + fast-track + reset 24h
+- [x] AI endpoint `/chat/handle-support` + `/chat/handle-general`
 - [ ] Settings UI: thêm textarea `page_policy` vào SettingsPage
 
 ## livestream-reply — chưa code

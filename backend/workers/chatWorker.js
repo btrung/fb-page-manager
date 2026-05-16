@@ -202,7 +202,6 @@ const processChatJob = async (job) => {
   // ── Guards cơ bản ──────────────────────────────────────────────────────────
   const session = await chatDB.getSessionById(sessionId);
   if (!session) return { skipped: 'session_not_found' };
-  if (session.aiMode === 'HUMAN') return { skipped: 'human_mode' };
 
   const aiSettings = await chatDB.getAiPageSettingsByPageId(session.pageId).catch(() => null);
   if (aiSettings && !aiSettings.aiEnabled) return { skipped: 'ai_disabled' };
@@ -210,12 +209,20 @@ const processChatJob = async (job) => {
     return { skipped: 'outside_active_hours' };
   }
 
-  // ── Reset state nếu khách im lặng quá 3 ngày ─────────────────────────────
-  // Tránh AI tiếp tục flow cũ khi khách quay lại sau thời gian dài
-  const SESSION_EXPIRE_DAYS = 3;
+  // ── Reset ai_mode → AI nếu idle >24h ─────────────────────────────────────
   const lastMsgAt = session.lastMessageAt ? new Date(session.lastMessageAt) : null;
-  const daysSince = lastMsgAt ? (Date.now() - lastMsgAt.getTime()) / (1000 * 60 * 60 * 24) : 0;
-  if (daysSince > SESSION_EXPIRE_DAYS && session.identifiedProduct) {
+  const hoursSince = lastMsgAt ? (Date.now() - lastMsgAt.getTime()) / (1000 * 60 * 60) : 0;
+  if (session.aiMode === 'HUMAN' && hoursSince > 24) {
+    await chatDB.updateSessionAiMode(sessionId, 'AI');
+    await chatDB.updateSessionIntelligence(sessionId, { supportTurns: 0, generalTurns: 0, lastProductHint: null });
+    session.aiMode = 'AI';
+    console.log(`[CHAT WORKER] session ${sessionId} auto-reset AI mode after ${hoursSince.toFixed(1)}h idle`);
+  }
+  if (session.aiMode === 'HUMAN') return { skipped: 'human_mode' };
+
+  // ── Reset state nếu khách im lặng quá 3 ngày ─────────────────────────────
+  const daysSince = hoursSince / 24;
+  if (daysSince > 3 && session.identifiedProduct) {
     await chatDB.updateSessionIntelligence(sessionId, {
       identifiedProduct:   null,
       productConfirmed:    false,
@@ -226,8 +233,9 @@ const processChatJob = async (job) => {
       noProductTurns:      0,
       unconfirmedTurns:    0,
       consultingTurns:     0,
+      lastProductHint:     null,
     });
-    console.log(`[CHAT WORKER] session ${sessionId} reset after ${daysSince.toFixed(1)} days idle`);
+    console.log(`[CHAT WORKER] session ${sessionId} full reset after ${daysSince.toFixed(1)} days idle`);
   }
 
   // ── Gom tất cả tin nhắn khách chưa được reply ─────────────────────────────
@@ -255,6 +263,7 @@ const processChatJob = async (job) => {
   const {
     identifiedProduct, productConfirmed, variantConfirmed,
     noProductTurns, unconfirmedTurns, consultingTurns, closingTurns,
+    supportTurns, generalTurns, lastProductHint,
   } = session;
 
   // ── Kiểm tra DỪNG trước khi làm gì ────────────────────────────────────────
@@ -281,7 +290,71 @@ const processChatJob = async (job) => {
     has_image: hasImage,
   });
   console.log('[CHAT WORKER] classify:', JSON.stringify(classify), '| msg:', lastCustomer.content?.slice(0, 60));
-  const { has_product_signal, product_hint, message_intent, product_feedback } = classify;
+  const { has_product_signal, product_hint, message_intent, product_feedback,
+          conversation_type, buy_candidate, frustration_level } = classify;
+
+  // Lưu last_product_hint mỗi lượt nếu có
+  if (product_hint) {
+    await chatDB.updateSessionIntelligence(sessionId, { lastProductHint: product_hint });
+  }
+
+  // ── conversation_type routing — chỉ khi chưa vào state machine ───────────
+  if (!identifiedProduct) {
+    if (conversation_type === 'support' && supportTurns < 5) {
+      const result = await callAI('/handle-support', {
+        message:           combinedContent,
+        product_hint:      product_hint || lastProductHint || null,
+        frustration_level: frustration_level || 'low',
+        reply_style:       aiSettings?.replyStyle || null,
+      });
+      await _sendAndSave({ session, reply: result.reply });
+      await chatDB.incrementCounter(sessionId, 'support_turns');
+      console.log('[CHAT WORKER] support:', { frustration_level: result.frustration_level, cta_included: result.cta_included });
+      return { handled: 'support', turns: supportTurns + 1, frustration: result.frustration_level };
+    }
+
+    if (conversation_type === 'support' && supportTurns >= 5) {
+      await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
+      return { skipped: 'dung_support', turns: supportTurns };
+    }
+
+    if (conversation_type === 'general' && generalTurns < 5) {
+      const result = await callAI('/handle-general', {
+        message:     combinedContent,
+        page_policy: aiSettings?.pagePolicy || null,
+        niche:       aiSettings?.niche || null,
+        reply_style: aiSettings?.replyStyle || null,
+      });
+      await _sendAndSave({ session, reply: result.reply });
+      await chatDB.incrementCounter(sessionId, 'general_turns');
+      return { handled: 'general', turns: generalTurns + 1 };
+    }
+
+    if (conversation_type === 'general' && generalTurns >= 5) {
+      await chatDB.updateSessionAiMode(sessionId, 'HUMAN');
+      return { skipped: 'dung_general', turns: generalTurns };
+    }
+
+    // Fast-track: có hint từ support/general → thử tìm SP ngay, skip State 0 nếu high confidence
+    const fastTrackHint = buy_candidate || (conversation_type === 'buying' ? product_hint : null) || lastProductHint;
+    if (fastTrackHint && conversation_type === 'buying') {
+      const found = await _searchProducts({ session, query: fastTrackHint, imageUrl, topK: 3 });
+      if (found.length === 1 && found[0].score >= 0.5) {
+        // High confidence → State 1 trực tiếp
+        await chatDB.updateSessionIntelligence(sessionId, {
+          identifiedProduct: found[0].product,
+          noProductTurns:    0,
+          lastProductHint:   null,
+        });
+        await chatDB.updateSessionIntent(sessionId, 'Muốn Mua');
+        const { reply } = await callAI('/generate-product-confirm', { product_name: found[0].product.name });
+        if (found[0].imageUrl) await sendFbImage(session.pageId, session.customerPsid, found[0].imageUrl);
+        await _sendAndSave({ session, reply });
+        return { handled: 'state0_fasttrack_s1', product: found[0].product.name };
+      }
+      // Medium/low confidence → tiếp tục State 0 bình thường với hint đã có
+    }
+  }
 
   // ════════════════════════════════════════════════════════════════════════════
   // STATE 0 — Chưa có identified_product

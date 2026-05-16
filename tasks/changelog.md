@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.6 — 2026-05-16 — Phase 7: 3 conversation types + fast-track + session reset 24h
+- `ai-service/app/services/chat_llm_service.py` — classify_intent thêm conversation_type/buy_candidate/frustration_level; handle_support; handle_general
+- `ai-service/app/routers/chat.py` — thêm /handle-support, /handle-general
+- `backend/workers/chatWorker.js` — routing support/general/buying; lưu last_product_hint; fast-track State 1; reset 24h
+- `backend/db/chatDB.js` — thêm support_turns, general_turns, lastProductHint vào _SESSION_COLS + updateSessionIntelligence + incrementCounter; page_policy + niche vào getAiPageSettingsByPageId
+- `backend/db/schema.sql` — migration Phase 7
+
 ## v0.5 — 2026-05-16 — Auto subscribe webhook + role detection
 - `backend/routes/api.js` — thêm `tasks` field khi fetch `/me/accounts`, detect role, subscribe webhook tự động chỉ cho ADMINISTRATOR
 - `backend/db/schema.sql` — thêm cột `role VARCHAR(50)` vào `page_tokens`

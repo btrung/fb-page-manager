@@ -413,3 +413,13 @@ ALTER TABLE ai_page_settings
 
 ALTER TABLE page_tokens
   ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT 'UNKNOWN';
+
+-- Phase 7: 3 conversation types
+ALTER TABLE chat_sessions
+  ADD COLUMN IF NOT EXISTS support_turns    INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS general_turns    INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS last_product_hint VARCHAR(500),
+  ADD COLUMN IF NOT EXISTS last_message_at_ai TIMESTAMPTZ;
+
+ALTER TABLE ai_page_settings
+  ADD COLUMN IF NOT EXISTS page_policy TEXT;

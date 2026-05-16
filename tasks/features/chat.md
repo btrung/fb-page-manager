@@ -111,7 +111,7 @@ Routing:
 - [x] Phase 4 — Settings Page (toggle AI + active hours per fanpage)
 - [x] Phase 5 — State machine 4 states + 2-stage retrieval (Qdrant → LLM rerank)
 - [x] Phase 6 — Webview form giao hàng (State 3 redesign, thay LLM collect trực tiếp)
-- [ ] Phase 7 — 3 conversation types (support/general/buying) + fast-track + session reset 24h
+- [x] Phase 7 — 3 conversation types (support/general/buying) + fast-track + session reset 24h
 - [ ] Phase 8 — Niche filter + auto-detect ngách sau crawl
 - [ ] Phase 9 — Cron auto-crawl định kỳ
 
@@ -171,6 +171,6 @@ page_policy   TEXT      -- chính sách bảo hành, vận chuyển... (Phase 7,
 
 ## Nâng cấp tiếp theo
 
-- **3 conversation types** (Phase 7 — thiết kế xong, chưa code) — support/general/buying + fast-track + session reset 24h. Chi tiết đã có trong Flow hiện tại + Schema
+- **3 conversation types** (Phase 7 — ✅ đã code) — support/general/buying + fast-track + session reset 24h
 - Niche filter — State 0 reject product_hint không khớp ngách (đã có schema `niche`, chưa code logic check)
 - State 2 timing bug fix — tính missing sau khi merge extracted_variants trước khi pass vào LLM

@@ -29,6 +29,8 @@ from app.services.chat_llm_service import (
     detect_variants,
     detect_niche,
     rerank_products,
+    handle_support,
+    handle_general,
 )
 from app.services.embedding_service import embedding_service
 from app.services.image_embedding_service import image_embedding_service
@@ -460,3 +462,37 @@ async def api_rerank_products(body: RerankRequest):
         candidates=[c.dict() for c in body.candidates],
     )
     return result
+
+
+class HandleSupportRequest(BaseModel):
+    message: str
+    product_hint: Optional[str] = None
+    frustration_level: str = "low"
+    reply_style: Optional[str] = None
+
+
+class HandleGeneralRequest(BaseModel):
+    message: str
+    page_policy: Optional[str] = None
+    niche: Optional[str] = None
+    reply_style: Optional[str] = None
+
+
+@router.post("/handle-support")
+async def api_handle_support(body: HandleSupportRequest):
+    return await handle_support(
+        message=body.message,
+        product_hint=body.product_hint,
+        frustration_level=body.frustration_level,
+        reply_style=body.reply_style,
+    )
+
+
+@router.post("/handle-general")
+async def api_handle_general(body: HandleGeneralRequest):
+    return await handle_general(
+        message=body.message,
+        page_policy=body.page_policy,
+        niche=body.niche,
+        reply_style=body.reply_style,
+    )

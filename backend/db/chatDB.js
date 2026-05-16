@@ -39,7 +39,7 @@ const getAiPageSettingsByPageId = async (pageId) => {
   const { rows } = await pool.query(
     `SELECT id, user_id AS "userId", page_id AS "pageId",
             ai_enabled AS "aiEnabled", active_hours AS "activeHours",
-            reply_style AS "replyStyle"
+            reply_style AS "replyStyle", niche, page_policy AS "pagePolicy"
      FROM ai_page_settings
      WHERE page_id = $1`,
     [pageId]
@@ -96,7 +96,10 @@ const _SESSION_COLS = `
   product_variants AS "productVariants",
   variant_confirmed AS "variantConfirmed",
   consulting_turns AS "consultingTurns",
-  candidate_products AS "candidateProducts"`;
+  candidate_products AS "candidateProducts",
+  support_turns AS "supportTurns",
+  general_turns AS "generalTurns",
+  last_product_hint AS "lastProductHint"`;
 
 const getOrCreateSession = async ({ pageId, userId, customerPsid, customerName, customerAvatar }) => {
   const { rows: existing } = await pool.query(
@@ -299,6 +302,22 @@ const updateSessionIntelligence = async (sessionId, updates = {}) => {
       i++;
     }
   }
+  if ('supportTurns' in updates) {
+    sets.push(`support_turns = $${i}`);
+    params.push(updates.supportTurns ?? 0);
+    i++;
+  }
+  if ('generalTurns' in updates) {
+    sets.push(`general_turns = $${i}`);
+    params.push(updates.generalTurns ?? 0);
+    i++;
+  }
+  if ('lastProductHint' in updates) {
+    sets.push(updates.lastProductHint == null
+      ? `last_product_hint = NULL`
+      : `last_product_hint = $${i++}`);
+    if (updates.lastProductHint != null) params.push(updates.lastProductHint);
+  }
 
   if (!sets.length) return;
   await pool.query(
@@ -313,6 +332,8 @@ const incrementCounter = async (sessionId, counter) => {
     unconfirmed_turns: 'unconfirmed_turns',
     consulting_turns:  'consulting_turns',
     closing_turns:     'closing_turns',
+    support_turns:     'support_turns',
+    general_turns:     'general_turns',
   }[counter];
   if (!col) throw new Error(`Unknown counter: ${counter}`);
   await pool.query(

@@ -77,25 +77,46 @@ async def _call_groq(system_prompt: str, user_content: str, max_tokens: int = 30
 
 _INTENT_SYSTEM = """Bạn phân tích TIN NHẮN MỚI NHẤT của khách hàng và trả về JSON.
 
-{"has_product_signal": bool, "product_hint": str|null, "message_intent": str, "product_feedback": str}
+{
+  "has_product_signal": bool,
+  "product_hint": str|null,
+  "message_intent": str,
+  "product_feedback": str,
+  "conversation_type": str,
+  "buy_candidate": str|null,
+  "frustration_level": str
+}
 
 has_product_signal: true nếu tin nhắn nhắc đến BẤT KỲ tên SP, loại hàng, hoặc khách gửi ảnh.
-  false nếu chỉ chào hỏi, đùa giỡn, hỏi lung tung không liên quan hàng hoá.
 
-product_hint: cụm từ NGẮN NHẤT để search SP ("áo thun lạnh", "túi da đen size M").
-  null nếu không có tín hiệu SP nào.
+product_hint: cụm từ NGẮN NHẤT để search SP ("áo thun lạnh", "túi da đen size M"). null nếu không có.
 
 message_intent:
 - "buying":     có ý định mua, hỏi giá, đặt hàng, hỏi còn hàng không
 - "asking":     hỏi thông tin SP, chất lượng, mẫu mã, so sánh
-- "confirming": xác nhận đúng SP hoặc đồng ý mua (ok/phải/đúng rồi/cho em đặt/được/vâng...)
-- "joking":     chào hỏi thuần túy, spam, câu hỏi không liên quan hàng hoá
+- "confirming": xác nhận đúng SP hoặc đồng ý mua
+- "joking":     chào hỏi thuần túy, spam, không liên quan hàng hoá
 - "other":      không rõ ý định
 
-product_feedback: phản hồi của khách về SP AI vừa giới thiệu — chỉ xét tin nhắn này:
-- "confirmed": xác nhận đúng SP (đúng/phải/ok/vâng/cho đặt...)
-- "denied":    từ chối SP (không phải/sai/khác/không đúng/không giống...)
-- "none":      không phải phản hồi về SP cụ thể nào
+product_feedback: phản hồi về SP AI vừa giới thiệu:
+- "confirmed": xác nhận đúng SP
+- "denied":    từ chối SP
+- "none":      không phải phản hồi về SP
+
+conversation_type — mục đích chính của tin nhắn:
+- "buying":  có tín hiệu mua hàng (hỏi giá, đặt hàng, hỏi SP)
+- "support": phàn nàn về SP đã mua, chất lượng kém, yêu cầu đổi/trả
+- "general": hỏi chính sách (bảo hành, vận chuyển, đổi trả), không liên quan SP cụ thể; hoặc chào hỏi/đùa giỡn
+
+buy_candidate: nếu conversation_type="support", đây là SP khách có thể MUỐN MUA (khác SP đang phàn nàn).
+  Ví dụ: "áo này bị hư, cho đổi cái khác" → buy_candidate="cái khác".
+  null nếu không rõ hoặc conversation_type khác support.
+
+frustration_level — mức độ bực bội (chỉ xét khi conversation_type="support"):
+- "high":   tức giận, dùng từ mạnh, đe dọa, CAPSLOCK
+- "medium": không hài lòng nhưng bình tĩnh
+- "low":    phàn nàn nhẹ, vẫn lịch sự
+Nếu không phải support → trả "low".
 
 Chỉ trả về JSON thuần, không giải thích."""
 
@@ -103,19 +124,23 @@ Chỉ trả về JSON thuần, không giải thích."""
 async def classify_intent(message: str, has_image: bool = False) -> dict:
     """
     Phân tích TIN NHẮN MỚI NHẤT của khách — không dùng history.
-    Trả về: {has_product_signal, product_hint, message_intent, product_feedback}
+    Trả về: {has_product_signal, product_hint, message_intent, product_feedback,
+             conversation_type, buy_candidate, frustration_level}
     """
     content = f"Tin nhắn: {message}"
     if has_image:
         content += "\n[Khách gửi kèm ảnh sản phẩm]"
 
-    result = await _call_groq(_INTENT_SYSTEM, content, max_tokens=120)
+    result = await _call_groq(_INTENT_SYSTEM, content, max_tokens=180)
 
     empty = {
         "has_product_signal": False,
         "product_hint": None,
         "message_intent": "other",
         "product_feedback": "none",
+        "conversation_type": "general",
+        "buy_candidate": None,
+        "frustration_level": "low",
     }
     if not result:
         return empty
@@ -130,11 +155,20 @@ async def classify_intent(message: str, has_image: bool = False) -> dict:
         product_feedback = parsed.get("product_feedback", "none")
         if product_feedback not in {"confirmed", "denied", "none"}:
             product_feedback = "none"
+        conversation_type = parsed.get("conversation_type", "general")
+        if conversation_type not in {"buying", "support", "general"}:
+            conversation_type = "general"
+        frustration_level = parsed.get("frustration_level", "low")
+        if frustration_level not in {"high", "medium", "low"}:
+            frustration_level = "low"
         return {
             "has_product_signal": bool(parsed.get("has_product_signal")),
             "product_hint": parsed.get("product_hint") or None,
             "message_intent": message_intent,
             "product_feedback": product_feedback,
+            "conversation_type": conversation_type,
+            "buy_candidate": parsed.get("buy_candidate") or None,
+            "frustration_level": frustration_level,
         }
     except Exception:
         return empty
@@ -742,6 +776,92 @@ async def rerank_products(query: str, candidates: list[dict]) -> dict:
         }
     except Exception:
         return fallback
+
+
+# =============================================
+# Support Handler — bảo vệ SP, detect frustration, gentle CTA
+# =============================================
+
+_SUPPORT_SYSTEM = """Bạn là nhân viên CSKH của shop bán hàng online. Khách đang phàn nàn về sản phẩm.
+
+Nhiệm vụ:
+1. Thể hiện sự đồng cảm, xin lỗi nếu cần
+2. Bảo vệ SP một cách khéo léo (giải thích tích cực: cách dùng, bảo quản, trường hợp đặc biệt...)
+3. Nếu frustration_level KHÔNG phải "high": thêm 1 câu nhẹ nhàng gợi ý SP khác hoặc mẫu mới phù hợp hơn
+4. Nếu frustration_level = "high": KHÔNG gợi ý mua hàng, chỉ xử lý vấn đề
+
+Trả về JSON:
+{
+  "reply": "<tin nhắn trả lời>",
+  "frustration_level": "high|medium|low",
+  "cta_included": bool
+}
+
+Giọng: theo reply_style của shop. Ngắn gọn, chân thành. Chỉ trả về JSON thuần."""
+
+
+async def handle_support(message: str, product_hint: str | None,
+                         frustration_level: str, reply_style: str | None) -> dict:
+    """Xử lý tin nhắn phàn nàn — bảo vệ SP + CTA nhẹ khi thích hợp."""
+    style_note = f"\nGiọng điệu shop: {reply_style}" if reply_style else ""
+    product_note = f"\nSP liên quan: {product_hint}" if product_hint else ""
+    content = (
+        f"Tin nhắn khách: {message}\n"
+        f"Mức độ bực bội đánh giá sơ bộ: {frustration_level}"
+        f"{product_note}{style_note}"
+    )
+    result = await _call_groq(_SUPPORT_SYSTEM, content, max_tokens=300)
+    empty = {"reply": "Dạ em rất tiếc về trải nghiệm này. Anh/chị cho em biết thêm để em hỗ trợ ngay nhé!", "frustration_level": frustration_level, "cta_included": False}
+    if not result:
+        return empty
+    try:
+        start = result.find("{")
+        end = result.rfind("}") + 1
+        parsed = json.loads(result[start:end])
+        fl = parsed.get("frustration_level", frustration_level)
+        if fl not in {"high", "medium", "low"}:
+            fl = frustration_level
+        return {
+            "reply": parsed.get("reply") or empty["reply"],
+            "frustration_level": fl,
+            "cta_included": bool(parsed.get("cta_included", False)),
+        }
+    except Exception:
+        return empty
+
+
+# =============================================
+# General Handler — trả lời chính sách từ page_policy
+# =============================================
+
+_GENERAL_SYSTEM = """Bạn là nhân viên tư vấn của shop bán hàng online.
+Khách hỏi về chính sách hoặc thông tin chung (bảo hành, vận chuyển, đổi trả...).
+
+Dùng thông tin từ "Chính sách shop" để trả lời. Nếu không có thông tin cụ thể thì trả lời chung chung lịch sự.
+KHÔNG tư vấn sản phẩm cụ thể trong phần này.
+
+Trả về JSON: {"reply": "<tin nhắn trả lời>"}
+Giọng: theo reply_style của shop. Ngắn gọn, rõ ràng. Chỉ trả về JSON thuần."""
+
+
+async def handle_general(message: str, page_policy: str | None,
+                         niche: str | None, reply_style: str | None) -> dict:
+    """Trả lời câu hỏi chính sách / thông tin chung từ page_policy."""
+    policy_note = f"\nChính sách shop:\n{page_policy}" if page_policy else "\nChính sách shop: (chưa cấu hình)"
+    niche_note = f"\nNgách shop: {niche}" if niche else ""
+    style_note = f"\nGiọng điệu: {reply_style}" if reply_style else ""
+    content = f"Câu hỏi khách: {message}{policy_note}{niche_note}{style_note}"
+    result = await _call_groq(_GENERAL_SYSTEM, content, max_tokens=250)
+    empty = {"reply": "Dạ anh/chị cho em xin thêm thông tin để em hỗ trợ tốt hơn nhé!"}
+    if not result:
+        return empty
+    try:
+        start = result.find("{")
+        end = result.rfind("}") + 1
+        parsed = json.loads(result[start:end])
+        return {"reply": parsed.get("reply") or empty["reply"]}
+    except Exception:
+        return empty
 
 
 # =============================================
