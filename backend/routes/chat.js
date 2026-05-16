@@ -329,11 +329,11 @@ apiRouter.get('/settings', async (req, res) => {
 // PUT /api/chat/settings/:pageId — cập nhật cài đặt AI
 apiRouter.put('/settings/:pageId', async (req, res) => {
   try {
-    const { aiEnabled, activeHours, replyStyle } = req.body;
+    const { aiEnabled, activeHours, replyStyle, pagePolicy } = req.body;
     const setting = await chatDB.upsertAiPageSettings(
       req.user.id,
       req.params.pageId,
-      { aiEnabled, activeHours, replyStyle }
+      { aiEnabled, activeHours, replyStyle, pagePolicy }
     );
     res.json({ setting });
   } catch (err) {

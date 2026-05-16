@@ -51,7 +51,7 @@ const getAllAiPageSettings = async (userId) => {
   const { rows } = await pool.query(
     `SELECT id, page_id AS "pageId", ai_enabled AS "aiEnabled",
             active_hours AS "activeHours", reply_style AS "replyStyle",
-            updated_at AS "updatedAt"
+            page_policy AS "pagePolicy", updated_at AS "updatedAt"
      FROM ai_page_settings
      WHERE user_id = $1
      ORDER BY page_id`,
@@ -60,17 +60,19 @@ const getAllAiPageSettings = async (userId) => {
   return rows;
 };
 
-const upsertAiPageSettings = async (userId, pageId, { aiEnabled, activeHours, replyStyle }) => {
+const upsertAiPageSettings = async (userId, pageId, { aiEnabled, activeHours, replyStyle, pagePolicy }) => {
   const { rows } = await pool.query(
-    `INSERT INTO ai_page_settings (user_id, page_id, ai_enabled, active_hours, reply_style, updated_at)
-     VALUES ($1, $2, $3, $4, $5, NOW())
+    `INSERT INTO ai_page_settings (user_id, page_id, ai_enabled, active_hours, reply_style, page_policy, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())
      ON CONFLICT (user_id, page_id) DO UPDATE SET
        ai_enabled   = EXCLUDED.ai_enabled,
        active_hours = EXCLUDED.active_hours,
        reply_style  = EXCLUDED.reply_style,
+       page_policy  = EXCLUDED.page_policy,
        updated_at   = NOW()
-     RETURNING id, ai_enabled AS "aiEnabled", active_hours AS "activeHours", reply_style AS "replyStyle"`,
-    [userId, pageId, aiEnabled ?? false, activeHours ?? null, replyStyle ?? null]
+     RETURNING id, ai_enabled AS "aiEnabled", active_hours AS "activeHours",
+               reply_style AS "replyStyle", page_policy AS "pagePolicy"`,
+    [userId, pageId, aiEnabled ?? false, activeHours ?? null, replyStyle ?? null, pagePolicy ?? null]
   );
   return rows[0];
 };

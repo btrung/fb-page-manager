@@ -13,7 +13,7 @@
 - [x] `classify_intent`: thêm conversation_type, buy_candidate, frustration_level
 - [x] `chatWorker.js`: routing support/general/buying + last_product_hint + fast-track + reset 24h
 - [x] AI endpoint `/chat/handle-support` + `/chat/handle-general`
-- [ ] Settings UI: thêm textarea `page_policy` vào SettingsPage
+- [x] Settings UI: thêm textarea `page_policy` vào SettingsPage
 
 ## livestream-reply — chưa code
 

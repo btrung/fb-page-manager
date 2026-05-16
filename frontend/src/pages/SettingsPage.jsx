@@ -77,8 +77,10 @@ const PageCard = ({ page, setting, onSave }) => {
   const [aiEnabled, setAiEnabled]     = useState(setting?.aiEnabled ?? false);
   const [activeHours, setActiveHours] = useState(setting?.activeHours ?? null);
   const [replyStyle, setReplyStyle]   = useState(setting?.replyStyle ?? '');
+  const [pagePolicy, setPagePolicy]   = useState(setting?.pagePolicy ?? '');
   const [showHours, setShowHours]     = useState(false);
   const [showStyle, setShowStyle]     = useState(false);
+  const [showPolicy, setShowPolicy]   = useState(false);
   const [saving, setSaving]           = useState(false);
   const [saved, setSaved]             = useState(false);
 
@@ -87,17 +89,26 @@ const PageCard = ({ page, setting, onSave }) => {
     setAiEnabled(setting?.aiEnabled ?? false);
     setActiveHours(setting?.activeHours ?? null);
     setReplyStyle(setting?.replyStyle ?? '');
+    setPagePolicy(setting?.pagePolicy ?? '');
   }, [setting]);
+
+  const _save = (overrides = {}) =>
+    chatApi.updateSettings(page.id, {
+      aiEnabled, activeHours,
+      replyStyle: replyStyle || null,
+      pagePolicy: pagePolicy || null,
+      ...overrides,
+    });
 
   const handleToggleAi = async () => {
     const next = !aiEnabled;
     setAiEnabled(next);
     setSaving(true);
     try {
-      await chatApi.updateSettings(page.id, { aiEnabled: next, activeHours, replyStyle: replyStyle || null });
+      await _save({ aiEnabled: next });
       flashSaved();
     } catch {
-      setAiEnabled(!next); // rollback
+      setAiEnabled(!next);
     } finally {
       setSaving(false);
     }
@@ -106,7 +117,7 @@ const PageCard = ({ page, setting, onSave }) => {
   const handleSaveHours = async () => {
     setSaving(true);
     try {
-      await chatApi.updateSettings(page.id, { aiEnabled, activeHours, replyStyle: replyStyle || null });
+      await _save();
       setShowHours(false);
       flashSaved();
     } finally {
@@ -117,8 +128,19 @@ const PageCard = ({ page, setting, onSave }) => {
   const handleSaveStyle = async () => {
     setSaving(true);
     try {
-      await chatApi.updateSettings(page.id, { aiEnabled, activeHours, replyStyle: replyStyle || null });
+      await _save();
       setShowStyle(false);
+      flashSaved();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSavePolicy = async () => {
+    setSaving(true);
+    try {
+      await _save();
+      setShowPolicy(false);
       flashSaved();
     } finally {
       setSaving(false);
@@ -265,6 +287,53 @@ const PageCard = ({ page, setting, onSave }) => {
                 className="bg-gray-100 text-gray-600 text-xs px-4 py-1.5 rounded-lg hover:bg-gray-200 transition-colors"
               >
                 Xoá (dùng mặc định)
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Page policy */}
+      <div className="px-5 pb-4">
+        <button
+          onClick={() => setShowPolicy((v) => !v)}
+          className="flex items-center justify-between w-full text-sm text-gray-600 hover:text-gray-900 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <span>📋</span>
+            <span>Chính sách shop:</span>
+            <span className="font-medium text-gray-800 truncate max-w-[120px]">
+              {pagePolicy ? pagePolicy.slice(0, 30) + (pagePolicy.length > 30 ? '…' : '') : 'Chưa cấu hình'}
+            </span>
+          </div>
+          <span className="text-gray-400 text-xs">{showPolicy ? '▲' : '▼'}</span>
+        </button>
+
+        {showPolicy && (
+          <div className="mt-3 border border-gray-100 rounded-xl p-3 bg-gray-50">
+            <div className="text-xs text-gray-500 mb-2">
+              AI dùng thông tin này để trả lời câu hỏi về bảo hành, vận chuyển, đổi trả...
+            </div>
+            <textarea
+              value={pagePolicy}
+              onChange={(e) => setPagePolicy(e.target.value)}
+              placeholder="Ví dụ: Bảo hành 30 ngày. Giao hàng 2-3 ngày. Đổi trả trong 7 ngày nếu lỗi nhà sản xuất..."
+              rows={5}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-facebook-blue resize-none"
+            />
+            <div className="flex gap-2 mt-2">
+              <button
+                onClick={handleSavePolicy}
+                disabled={saving}
+                className="bg-facebook-blue text-white text-xs px-4 py-1.5 rounded-lg font-medium hover:bg-facebook-dark disabled:opacity-40 transition-colors"
+              >
+                Lưu chính sách
+              </button>
+              <button
+                onClick={() => setPagePolicy('')}
+                className="bg-gray-100 text-gray-600 text-xs px-4 py-1.5 rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Xoá
               </button>
             </div>
           </div>
