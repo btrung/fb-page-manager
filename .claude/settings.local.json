@@ -17,7 +17,9 @@
       "Bash(docker stats *)",
       "Bash(docker stop ai-chat-backend-1 *)",
       "Bash(wmic OS *)",
-      "Bash(docker stop ai-chat-frontend-1 *)"
+      "Bash(docker stop ai-chat-frontend-1 *)",
+      "Read(//c/Users/ADMIN/AppData/Local/ngrok/**)",
+      "Read(//c/Users/ADMIN/.ngrok2/**)"
     ]
   }
 }
