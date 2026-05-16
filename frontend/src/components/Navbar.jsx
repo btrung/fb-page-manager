@@ -10,8 +10,9 @@ const Navbar = () => {
   const { dungCount } = useChatBadge();
 
   const NAV_TABS = [
-    { label: '🧠 AI Học',    to: '/dashboard', badge: 0 },
-    { label: '💬 Hội Thoại', to: '/chat',       badge: dungCount },
+    { label: '🧠 AI Học',    to: '/dashboard',  badge: 0 },
+    { label: '💬 Hội Thoại', to: '/chat',        badge: dungCount },
+    { label: '📺 Livestream', to: '/livestream', badge: 0 },
     { label: '⚙️ Cài đặt',   to: '/settings',   badge: 0 },
   ];
 

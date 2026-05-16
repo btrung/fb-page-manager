@@ -8,6 +8,7 @@ import PostsPage from './pages/PostsPage';
 import IntelligencePage from './pages/IntelligencePage';
 import ChatPage from './pages/ChatPage';
 import SettingsPage from './pages/SettingsPage';
+import LivestreamPage from './pages/LivestreamPage';
 import LoadingSpinner from './components/LoadingSpinner';
 
 // Route chỉ dành cho user đã login
@@ -72,6 +73,14 @@ const AppRoutes = () => (
       element={
         <PrivateRoute>
           <SettingsPage />
+        </PrivateRoute>
+      }
+    />
+    <Route
+      path="/livestream"
+      element={
+        <PrivateRoute>
+          <LivestreamPage />
         </PrivateRoute>
       }
     />
