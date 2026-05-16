@@ -73,6 +73,7 @@ class EmbedPostTextRequest(BaseModel):
     is_sale_post: bool = False
     current_price: Optional[int] = None
     post_created_time: Optional[str] = None
+    image_url: Optional[str] = None
 
 
 class EmbedPostTextResponse(BaseModel):
@@ -224,6 +225,7 @@ async def embed_post_text(req: EmbedPostTextRequest):
             "product_name": req.product_name,
             "current_price": req.current_price,
             "post_created_time": req.post_created_time,
+            "image_url": req.image_url,
         },
     )
 

@@ -58,7 +58,9 @@ const checkSchema = async () => {
     WHERE table_schema = 'public'
       AND table_name IN (
         'posts', 'post_media', 'product_from_posts',
-        'post_products', 'product_media_vectors', 'crawl_logs'
+        'post_products', 'product_media_vectors', 'crawl_logs',
+        'ai_page_settings', 'chat_sessions', 'chat_messages',
+        'session_tags', 'chat_orders'
       )
     ORDER BY table_name
   `);

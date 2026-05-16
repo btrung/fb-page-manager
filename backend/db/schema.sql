@@ -248,3 +248,165 @@ CREATE INDEX IF NOT EXISTS idx_page_tokens_user
 -- ALTER: thêm cột mới cho DB đã tồn tại (idempotent)
 -- =============================================
 ALTER TABLE product_from_posts ADD COLUMN IF NOT EXISTS image_url TEXT;
+
+
+-- =============================================
+-- 8. AI Chat — cài đặt AI per fanpage
+-- =============================================
+CREATE TABLE IF NOT EXISTS ai_page_settings (
+  id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id      VARCHAR(255) NOT NULL,
+  page_id      VARCHAR(255) NOT NULL,
+  ai_enabled   BOOLEAN      DEFAULT false,
+  -- null = 24/7, có giá trị: {"start":"08:00","end":"22:00","timezone":"Asia/Ho_Chi_Minh"}
+  active_hours JSONB,
+  created_at   TIMESTAMPTZ  DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ  DEFAULT NOW(),
+  UNIQUE(user_id, page_id)
+);
+
+
+-- =============================================
+-- 9. AI Chat — sessions hội thoại với khách
+-- =============================================
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  page_id           VARCHAR(255) NOT NULL,
+  user_id           VARCHAR(255) NOT NULL,
+  customer_psid     VARCHAR(255) NOT NULL,
+  customer_name     VARCHAR(255),
+  customer_avatar   TEXT,
+  -- Intent: Muốn Mua | Đang Tư Vấn | Khách Đùa | Không Nhu Cầu | Đang Chốt | Đã Chốt | Dừng
+  intent            VARCHAR(50)  DEFAULT 'Khách Đùa',
+  intent_updated_at TIMESTAMPTZ  DEFAULT NOW(),
+  -- AI Mode: 'AI' = AI Hoạt Động | 'HUMAN' = Người Tư Vấn
+  ai_mode           VARCHAR(10)  DEFAULT 'AI',
+  cooldown_until    TIMESTAMPTZ,
+  ai_turn_count     INTEGER      DEFAULT 0,
+  last_message_at   TIMESTAMPTZ  DEFAULT NOW(),
+  created_at        TIMESTAMPTZ  DEFAULT NOW(),
+  UNIQUE(page_id, customer_psid)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user
+  ON chat_sessions (user_id, last_message_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_page_psid
+  ON chat_sessions (page_id, customer_psid);
+
+
+-- =============================================
+-- 10. AI Chat — tin nhắn
+-- =============================================
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id                      UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id              UUID         NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  -- sender_type: 'customer' | 'ai' | 'human'
+  sender_type             VARCHAR(10)  NOT NULL,
+  content                 TEXT,
+  attachments             JSONB        DEFAULT '[]',
+  intent_at_time          VARCHAR(50),
+  is_confirmation_summary BOOLEAN      DEFAULT false,
+  is_customer_confirmed   BOOLEAN      DEFAULT false,
+  fb_message_id           VARCHAR(255) UNIQUE,
+  created_at              TIMESTAMPTZ  DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session
+  ON chat_messages (session_id, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_confirmation
+  ON chat_messages (session_id, is_confirmation_summary, is_customer_confirmed);
+
+
+-- =============================================
+-- 11. AI Chat — tags thủ công của user
+-- =============================================
+CREATE TABLE IF NOT EXISTS session_tags (
+  id         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID         NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  tag        VARCHAR(100) NOT NULL,
+  created_at TIMESTAMPTZ  DEFAULT NOW(),
+  UNIQUE(session_id, tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_tags_session
+  ON session_tags (session_id);
+
+
+-- =============================================
+-- 12. AI Chat — đơn hàng được AI chốt
+-- =============================================
+CREATE TABLE IF NOT EXISTS chat_orders (
+  id                          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id                  UUID        NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  customer_name               VARCHAR(255),
+  phone                       VARCHAR(50),
+  address                     TEXT,
+  product_name                TEXT,
+  note                        TEXT,
+  -- status: PENDING_REVIEW | CONFIRMED | CANCELLED
+  status                      VARCHAR(20) DEFAULT 'PENDING_REVIEW',
+  confirmation_summary_msg_id UUID        REFERENCES chat_messages(id),
+  customer_confirmed_msg_id   UUID        REFERENCES chat_messages(id),
+  customer_confirmed_at       TIMESTAMPTZ,
+  created_at                  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_orders_user
+  ON chat_orders (session_id);
+
+CREATE INDEX IF NOT EXISTS idx_chat_orders_status
+  ON chat_orders (status) WHERE status = 'PENDING_REVIEW';
+
+-- Phase 7: Message Intelligence
+ALTER TABLE chat_sessions
+  ADD COLUMN IF NOT EXISTS identified_product JSONB,
+  ADD COLUMN IF NOT EXISTS customer_mood      VARCHAR(20) DEFAULT 'neutral',
+  ADD COLUMN IF NOT EXISTS clarify_count      INTEGER     DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS product_confirmed  BOOLEAN     DEFAULT false;
+
+ALTER TABLE ai_page_settings
+  ADD COLUMN IF NOT EXISTS reply_style TEXT;
+
+-- State machine counters (thay clarify_count)
+ALTER TABLE chat_sessions
+  ADD COLUMN IF NOT EXISTS no_product_turns  INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS unconfirmed_turns INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS closing_turns     INTEGER DEFAULT 0;
+
+-- =============================================
+-- 13. Customer Profiles — hồ sơ khách hàng
+--     Tra cứu theo Facebook PSID, tái dùng khi quay lại mua
+-- =============================================
+CREATE TABLE IF NOT EXISTS customer_profiles (
+  id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  customer_psid VARCHAR(255) NOT NULL,
+  page_id       VARCHAR(255) NOT NULL,
+  name          VARCHAR(255),
+  phone         VARCHAR(50),
+  address       TEXT,
+  note          TEXT,
+  created_at    TIMESTAMPTZ  DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ  DEFAULT NOW(),
+  UNIQUE(customer_psid, page_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_profiles_psid
+  ON customer_profiles (customer_psid, page_id);
+
+-- Profile confirm flow: track đã hỏi xác nhận thông tin cũ chưa
+ALTER TABLE chat_sessions
+  ADD COLUMN IF NOT EXISTS profile_confirm_asked BOOLEAN DEFAULT false;
+
+-- Phase 8: State 2 consultation + niche
+ALTER TABLE chat_sessions
+  ADD COLUMN IF NOT EXISTS product_variants  JSONB   DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS variant_confirmed BOOLEAN DEFAULT false,
+  ADD COLUMN IF NOT EXISTS consulting_turns  INTEGER DEFAULT 0;
+
+ALTER TABLE chat_orders
+  ADD COLUMN IF NOT EXISTS product_variants JSONB;
+
+ALTER TABLE ai_page_settings
+  ADD COLUMN IF NOT EXISTS niche VARCHAR(100);

@@ -12,6 +12,8 @@ const authRoutes = require('./routes/auth');
 const apiRoutes = require('./routes/api');
 const intelligenceRoutes = require('./routes/intelligence');
 const { webhookRouter, debugRouter } = require('./routes/sync');
+const { webhookRouter: chatWebhookRouter, apiRouter: chatApiRouter } = require('./routes/chat');
+const formRouter = require('./routes/form');
 const { requireAuth } = require('./middleware/authMiddleware');
 
 const app = express();
@@ -71,9 +73,13 @@ app.use(session({
 app.use('/auth', authRoutes);
 app.use('/api', requireAuth, apiRoutes);
 app.use('/api/intelligence', requireAuth, intelligenceRoutes);
+app.use('/api/chat', requireAuth, chatApiRouter);
 app.use('/api/debug', requireAuth, debugRouter);
 // Webhook không cần auth — FB gọi trực tiếp
 app.use('/sync', webhookRouter);
+app.use('/webhook/chat', chatWebhookRouter);
+// Form webview — public (khách Messenger truy cập, không cần login)
+app.use('/form', formRouter);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', env: process.env.NODE_ENV });

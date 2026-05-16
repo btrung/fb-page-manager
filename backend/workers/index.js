@@ -7,6 +7,7 @@ require('dotenv').config();
 
 const { startCrawlWorker } = require('./crawlWorker');
 const { startEmbeddingWorker } = require('./embeddingWorker');
+const { startChatWorker } = require('./chatWorker');
 
 console.log('====================================');
 console.log(' FB Page Manager — Worker Service');
@@ -17,9 +18,10 @@ console.log(`AI_SERVICE  : ${process.env.AI_SERVICE_URL}`);
 console.log(`DB          : ${process.env.DATABASE_URL?.replace(/:[^:@]+@/, ':***@')}`);
 console.log('====================================');
 
-// Khởi động cả hai workers
+// Khởi động tất cả workers
 const crawlWorker = startCrawlWorker();
 const embeddingWorker = startEmbeddingWorker();
+const chatWorker = startChatWorker();
 
 // =============================================
 // Graceful shutdown — dọn dẹp khi nhận signal
@@ -30,6 +32,7 @@ const shutdown = async (signal) => {
     await Promise.all([
       crawlWorker.close(),
       embeddingWorker.close(),
+      chatWorker.close(),
     ]);
     console.log('[WORKERS] Shutdown hoàn tất');
     process.exit(0);

@@ -267,14 +267,18 @@ const processCrawlJob = async (job) => {
 
         if (result === 'skipped') {
           stats.postsSkipped++;
-          continue;
+          // Vẫn re-embed để sync Qdrant khi giá/tên thay đổi
+        } else {
+          stats.postsSaved++;
         }
 
-        stats.postsSaved++;
-
-        // ── Embed text post (best-effort) ──
+        // ── Embed text post (best-effort, luôn chạy kể cả post đã tồn tại) ──
+        // Dùng dòng đầu post (tên SP đầy đủ) làm product_name để search chính xác
+        // Fallback sang extracted_product_name nếu không có dòng đầu
+        const firstLine = (post.message || post.story || '').split('\n')[0].trim();
+        const productNameForEmbed = firstLine || llm.extracted_product_name || '';
         const postText = [
-          post.message || post.story || '',
+          productNameForEmbed,
           llm.what_is_product || '',
           llm.what_is_promotion || '',
         ].filter(Boolean).join('\n');
@@ -285,11 +289,12 @@ const processCrawlJob = async (job) => {
             text: postText,
             page_id: pageId,
             user_id: userId,
-            product_name: llm.extracted_product_name || null,
+            product_name: productNameForEmbed,
             product_id: null,
             is_sale_post: llm.is_sale_post ?? false,
             current_price: llm.price || null,
             post_created_time: post.created_time || null,
+            image_url: post._imageUrls?.[0] || post.full_picture || null,
           }, { timeout: 120000 }).catch((err) => {
             console.warn(`[CRAWL] Text embed thất bại post ${post.id}: ${err.message}`);
           });

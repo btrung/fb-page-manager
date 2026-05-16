@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import analyze, extract, embed
+from app.routers import analyze, extract, embed, chat
 from app.services.qdrant_service import qdrant_service
 from app.config import settings
 import uvicorn
@@ -36,6 +36,7 @@ app.add_middleware(
 app.include_router(analyze.router)
 app.include_router(extract.router)
 app.include_router(embed.router)
+app.include_router(chat.router)
 
 
 @app.get("/health")
