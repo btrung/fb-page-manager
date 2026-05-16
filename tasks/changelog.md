@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8 — 2026-05-16 — Livestream UI Phase 6 (mock data)
+- `frontend/src/pages/LivestreamPage.jsx` — layout 3 cột + mock data
+- `frontend/src/components/livestream/` — LiveSessionList, CommentFeed, CommentDetail, LiveSettingsModal
+- `frontend/src/components/Navbar.jsx` — thêm tab 📺 Livestream
+- `frontend/src/App.jsx` — thêm route /livestream
+- Chưa wire API, dùng mock data để review giao diện
+
 ## v0.7 — 2026-05-16 — Fix classify context + routing nhất quán mọi state
 
 - `ai-service` — classify_intent nhận thêm `current_state` + `recent_messages` (5 tin) → LLM hiểu context, không misclassify "đúng rồi" thành general

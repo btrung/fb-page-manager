@@ -8,20 +8,12 @@
 - [ ] State 2 timing bug — worker tính missing trước khi LLM extract tin hiện tại → mất 1 turn
 - [ ] User test — cho người dùng thật test, collect bugs
 
-### 3 conversation types (Phase 7 — đã code + fix)
-- [x] Schema + migration
-- [x] `classify_intent`: thêm conversation_type, buy_candidate, frustration_level + current_state + recent_messages
-- [x] `chatWorker.js`: routing support/general/buying mọi state + last_product_hint + fast-track + reset 24h
-- [x] `chatWorker.js`: switchHint + buy_candidate override → escape hatch nhất quán State 1/2/3
-- [x] AI endpoint `/chat/handle-support` + `/chat/handle-general`
-- [x] Settings UI: thêm textarea `page_policy` vào SettingsPage
+## livestream-reply — đang làm
 
-## livestream-reply — chưa code
-
-- [ ] DB migration: `live_comment_replies` + `livestream_ai_enabled` + `livestream_cta`
-- [ ] `liveQueue.js` + `liveWorker.js`: classify comment → reply kèm Messenger Ref URL
-- [ ] Webhook route `/webhook/live` nhận comment events từ Facebook
-- [ ] `chatWorker.js`: handle `referral.ref` → auto-tag + skip State 0
-- [ ] API: GET stats + comment list cho UI
-- [ ] Frontend: `LivestreamPage.jsx` + `LiveSessionList` + `CommentFeed` + `CommentDetail` + `LiveSettingsModal`
-- [ ] Test end-to-end: comment → AI reply → khách inbox → chốt đơn
+- [ ] Phase 1 — DB migration: `live_comment_replies` + `livestream_ai_enabled` + `livestream_cta`
+- [ ] Phase 2 — `liveQueue.js` + `liveWorker.js`: classify comment → reply kèm Messenger Ref URL
+- [ ] Phase 3 — Webhook route `/webhook/live` nhận comment events từ Facebook
+- [ ] Phase 4 — `chatWorker.js`: handle `referral.ref` → auto-tag + skip State 0
+- [ ] Phase 5 — API endpoints: stats + comment list cho UI
+- [ ] Phase 6b — Wire API thật vào LivestreamPage (thay mock data)
+- [ ] Phase 7 — Test end-to-end: comment → AI reply → khách inbox → chốt đơn

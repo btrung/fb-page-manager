@@ -43,22 +43,20 @@ docker compose logs -f worker
 | AI Học Fanpage | `/` | Hoạt động | — |
 | AI Chat | `/chat` | Hoạt động, đang user test | `tasks/features/chat.md` |
 | Cài đặt | `/settings` | Hoạt động | — |
-| Livestream Reply | `/livestream` | Đang thiết kế | `tasks/features/livestream-reply.md` |
+| Livestream Reply | `/livestream` | UI xong (mock data), backend chưa code | `tasks/features/livestream-reply.md` |
 
 ---
 
 ## Git
 
 ```
-main              ──── stable (chưa merge gì mới)
-chat-interface    ──── đang user test + fix bugs
-livestream-reply  ──── đang phát triển (branch này)
+main              ──── a47edd5  (merged từ chat-interface)
+chat-interface    ──── 5cc00db  (branch đang làm việc — chat fixes + livestream UI)
 ```
 
-- Fix chat → commit `chat-interface`
-- Code livestream → commit `livestream-reply`
-- Sync: `git merge chat-interface` vào `livestream-reply` khi chat có fix lớn
-- Merge vào `main` sau khi cả 2 ổn định
+- Đang làm việc trên `chat-interface`
+- Khi bắt đầu code backend livestream → tạo branch `livestream-reply` từ `chat-interface`
+- Merge vào `main` khi ổn định
 
 ---
 
