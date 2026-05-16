@@ -1,0 +1,127 @@
+# Quy trình quản lý dự án
+
+## Cấu trúc thư mục
+
+project/
+├── CLAUDE.md
+├── tasks/
+│   ├── todo.md
+│   ├── lessons.md
+│   ├── changelog.md
+│   └── features/
+│       └── [tên-feature].md
+└── .claude/
+    └── commands/
+        ├── checkpoint.md
+        ├── review.md
+        └── commit.md
+
+---
+
+## Vai trò từng file
+
+### CLAUDE.md
+- Chứa: stack, convention, git rules
+- Chứa: danh sách features + trỏ đường sang tasks/features/
+- Giữ dưới 200 dòng, không chứa logic chi tiết
+- Update khi: đổi stack, thêm feature mới, thêm convention mới
+
+### tasks/todo.md
+- Chứa: task đang làm + sắp làm
+- Ghi rõ đang dở ở đâu, bước tiếp là gì
+- Xong thì xóa, không giữ lại lịch sử
+- Claude tự update trong quá trình làm
+
+### tasks/lessons.md
+- Chứa: lỗi đã gặp toàn project, không phân biệt feature
+- Format: [ngày] — lỗi gì, sai ở đâu, cách đúng
+- Claude tự thêm mỗi khi fix lỗi lạ hoặc bị sửa
+
+### tasks/changelog.md
+- Chứa: lịch sử release theo version
+- Format: v1.x — [ngày] — tính năng gì hoàn thành
+- Trỏ về tasks/features/[tên].md để xem chi tiết
+- Claude tự update khi hoàn thành feature
+
+### tasks/features/[tên-feature].md
+- File làm việc chính, mày check ở đây là chủ yếu
+- Chứa logic hiện tại đang chạy, không chứa lịch sử
+- Khi logic thay đổi: ghi đè, không giữ phiên bản cũ
+- Mỗi feature một file riêng
+
+Format chuẩn:
+# [Tên feature]
+
+## Làm gì
+[mô tả ngắn mục đích]
+
+## Flow hiện tại
+[các bước xử lý theo thứ tự]
+
+## Schema / Config
+[bảng dữ liệu, biến môi trường, thông số]
+
+## Edge cases
+[các trường hợp đặc biệt đã xử lý]
+
+## Nâng cấp tiếp theo
+[ý tưởng cải thiện, chưa làm]
+
+---
+
+## .claude/commands/
+
+### checkpoint.md → /project:checkpoint
+
+### review.md → /project:review
+
+### commit.md → /project:commit
+
+
+---
+
+## Luồng làm việc
+
+### Bắt đầu tính năng mới
+1. Tạo tasks/features/[tên].md, viết logic + edge cases + nâng cấp dự kiến
+2. Thêm task vào todo.md
+3. Thêm 1 dòng vào CLAUDE.md trỏ sang file mới
+
+### Trong khi làm
+1. Đọc CLAUDE.md + todo.md + features/[liên quan]
+2. Làm xong bước nhỏ → update todo.md + git commit
+3. Session dài → /project:checkpoint → /clear → đọc lại todo.md
+
+### Hoàn thành tính năng
+1. Update tasks/features/[tên].md với logic mới nhất
+2. Thêm vào changelog.md, trỏ về file feature
+3. Xóa khỏi todo.md
+4. Git commit + tag version
+
+### Gặp bug sau này
+1. Xem changelog.md biết feature đó ở version nào
+2. Vào features/[tên].md xem logic + edge cases
+3. Fix xong → update features/[tên].md + thêm lessons.md
+
+### Gặp lỗi hoặc bị sửa
+1. Thêm ngay vào lessons.md
+2. Nếu lỗi liên quan logic feature → update edge cases
+   trong features/[tên].md
+
+
+
+---
+
+## Phân công: mày làm gì, Claude làm gì
+
+### Mày chỉ cần
+- Đọc tasks/features/[tên].md, confirm logic đúng ý muốn
+- Gõ task cần làm
+- Thêm ý tưởng vào mục "Nâng cấp tiếp theo" khi có
+
+### Claude tự lo
+- Update todo.md trong quá trình làm
+- Update lessons.md khi gặp lỗi
+- Update changelog.md khi xong feature
+- Update features/[tên].md khi logic thay đổi
+- Git commit sau mỗi bước
